@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-base: #000000;
+    --color-surface: #0A0A0A;
+    --color-elevated: #111111;
+    --color-hover: #181818;
+    --color-border: #1C1C1C;
+    --color-border-hover: #2A2A2A;
+    --color-text: #ffffff;
+    --color-text-secondary: #888888;
+    --color-text-muted: #505050;
+    --color-text-dark: #444444;
+    --color-text-darker: #333333;
+    --color-accent: #FF2D2D;
+    --color-overlay: rgba(0, 0, 0, 0.60);
+    --color-shadow: rgba(0, 0, 0, 0.8);
+    --color-dot-grid: #1A1A1A;
+    --color-scrollbar: #1C1C1C;
+    --color-scrollbar-hover: #2A2A2A;
+  }
+
+  [data-theme="light"] {
+    --color-base: #FAFAFA;
+    --color-surface: #F0F0F0;
+    --color-elevated: #E8E8E8;
+    --color-hover: #E0E0E0;
+    --color-border: #D8D8D8;
+    --color-border-hover: #C8C8C8;
+    --color-text: #1A1A1A;
+    --color-text-secondary: #6B6B6B;
+    --color-text-muted: #999999;
+    --color-text-dark: #ABABAB;
+    --color-text-darker: #BBBBBB;
+    --color-accent: #FF2D2D;
+    --color-overlay: rgba(0, 0, 0, 0.30);
+    --color-shadow: rgba(0, 0, 0, 0.1);
+    --color-dot-grid: #E0E0E0;
+    --color-scrollbar: #D0D0D0;
+    --color-scrollbar-hover: #BBBBBB;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Space Mono', 'Courier New', monospace;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+    background-color: var(--color-base);
+    color: var(--color-text);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar);
+    border-radius: 0;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-scrollbar-hover);
+  }
+}
+
+/* Drag region for custom title bar */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Nothing-style dot grid pattern */
+.dot-grid {
+  background-image: radial-gradient(circle, var(--color-dot-grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
