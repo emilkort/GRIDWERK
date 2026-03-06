@@ -5,7 +5,9 @@ const pageLabels: Record<string, string> = {
   'daw-hub': 'DAW Hub',
   'vst-manager': 'VST Plugins',
   'sample-library': 'Sample Library',
-  'project-tracker': 'Project Tracker'
+  'project-tracker': 'Project Tracker',
+  'analytics': 'Analytics',
+  'recommendations': 'Recommendations'
 }
 
 const entityPageMap: Record<string, Page> = {

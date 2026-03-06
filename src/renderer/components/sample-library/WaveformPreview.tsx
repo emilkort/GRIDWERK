@@ -25,8 +25,10 @@ export default memo(function WaveformPreview({
   // size changes. That assignment resets the full context (including DPR scale)
   // and is very expensive — avoid it on every 50ms progress tick.
   const lastSizeRef = useRef({ w: 0, h: 0, dpr: 0 })
+  // Track filled bar count to skip redraws when progress hasn't crossed a bar boundary
+  const lastFilledBarsRef = useRef(-1)
 
-  const drawImpl = useCallback(() => {
+  const drawImpl = useCallback((forceRedraw = false) => {
     const canvas = canvasRef.current
     if (!canvas || peaks.length === 0) return
 
@@ -35,6 +37,17 @@ export default memo(function WaveformPreview({
 
     const dpr = window.devicePixelRatio || 1
     const last = lastSizeRef.current
+    const barCount = peaks.length
+    const gap = 1
+    const barWidth = Math.max(1, (width - gap * (barCount - 1)) / barCount)
+    const progressX = progressRef.current * width
+    const filledBars = progressX > 0 ? Math.floor(progressX / (barWidth + gap)) : 0
+
+    // Skip redraw if only progress changed but filled bar count is the same
+    if (!forceRedraw && filledBars === lastFilledBarsRef.current && last.w === width * dpr) {
+      return
+    }
+    lastFilledBarsRef.current = filledBars
 
     if (last.w !== width * dpr || last.h !== height * dpr || last.dpr !== dpr) {
       // Resize resets the canvas context — re-apply the DPR scale transform
@@ -47,11 +60,7 @@ export default memo(function WaveformPreview({
       ctx.clearRect(0, 0, width, height)
     }
 
-    const barCount = peaks.length
-    const gap = 1
-    const barWidth = Math.max(1, (width - gap * (barCount - 1)) / barCount)
     const centerY = height / 2
-    const progressX = progressRef.current * width
 
     // Pass 1: draw ALL bars in the unplayed color (one fillStyle assignment)
     ctx.fillStyle = '#4b5563'
@@ -73,11 +82,13 @@ export default memo(function WaveformPreview({
     }
   }, [peaks, width, height, accentColor])
 
-  // Single effect handles both structural changes (peaks/size/color → drawImpl
-  // changes) and progress-only ticks. Avoids the double-draw that two separate
-  // effects caused on structural changes.
+  // Structural changes (peaks/size/color) force a full redraw via new drawImpl ref.
+  // Progress-only ticks go through the filledBars check and skip ~95% of redraws.
+  const prevDrawImplRef = useRef(drawImpl)
   useEffect(() => {
-    drawImpl()
+    const isStructuralChange = drawImpl !== prevDrawImplRef.current
+    prevDrawImplRef.current = drawImpl
+    drawImpl(isStructuralChange)
   }, [drawImpl, progress])
 
   const handleClick = useCallback(

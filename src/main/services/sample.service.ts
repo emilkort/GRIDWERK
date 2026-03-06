@@ -364,3 +364,104 @@ export function updateSample(
 
   db.prepare(`UPDATE samples SET ${sets.join(', ')} WHERE id = ?`).run(...params)
 }
+
+// Camelot wheel for key compatibility
+const CAMELOT_MAP: Record<string, string> = {
+  'C maj': '8B', 'G maj': '9B', 'D maj': '10B', 'A maj': '11B',
+  'E maj': '12B', 'B maj': '1B', 'F# maj': '2B', 'Db maj': '3B',
+  'Ab maj': '4B', 'Eb maj': '5B', 'Bb maj': '6B', 'F maj': '7B',
+  'A min': '8A', 'E min': '9A', 'B min': '10A', 'F# min': '11A',
+  'C# min': '12A', 'G# min': '1A', 'Eb min': '2A', 'Bb min': '3A',
+  'F min': '4A', 'C min': '5A', 'G min': '6A', 'D min': '7A',
+}
+
+function getCompatibleKeys(key: string): string[] {
+  const camelot = CAMELOT_MAP[key]
+  if (!camelot) return [key]
+
+  const num = parseInt(camelot)
+  const letter = camelot.slice(-1)
+  const otherLetter = letter === 'A' ? 'B' : 'A'
+
+  const compatible = new Set<string>()
+  compatible.add(key) // exact match
+
+  // Same position (relative major/minor)
+  // +1 and -1 on the wheel
+  const nums = [num, ((num - 2 + 12) % 12) + 1, (num % 12) + 1]
+  for (const n of nums) {
+    const codeA = `${n}A`
+    const codeB = `${n}B`
+    for (const [k, c] of Object.entries(CAMELOT_MAP)) {
+      if (c === codeA || c === codeB) compatible.add(k)
+    }
+  }
+  // Also add same number opposite ring
+  const opposite = `${num}${otherLetter}`
+  for (const [k, c] of Object.entries(CAMELOT_MAP)) {
+    if (c === opposite) compatible.add(k)
+  }
+
+  return [...compatible]
+}
+
+export function findMatchingSamples(
+  bpm: number | null,
+  key: string | null,
+  limit = 20
+): Sample[] {
+  const db = getDb()
+  const conditions: string[] = []
+  const params: any[] = []
+
+  if (bpm != null) {
+    const bpmLow = Math.round(bpm * 0.95)
+    const bpmHigh = Math.round(bpm * 1.05)
+    conditions.push('s.bpm BETWEEN ? AND ?')
+    params.push(bpmLow, bpmHigh)
+  }
+
+  if (key != null) {
+    const compatibleKeys = getCompatibleKeys(key)
+    conditions.push(`s.musical_key IN (${compatibleKeys.map(() => '?').join(',')})`)
+    params.push(...compatibleKeys)
+  }
+
+  if (conditions.length === 0) return []
+
+  params.push(limit)
+
+  return db.prepare(
+    `SELECT s.id, s.file_name, s.file_path, s.category, s.bpm, s.musical_key, s.duration_ms,
+       s.is_favorite, s.file_extension
+     FROM samples s
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY
+       CASE WHEN s.bpm IS NOT NULL AND s.musical_key IS NOT NULL THEN 0
+            WHEN s.musical_key IS NOT NULL THEN 1
+            ELSE 2 END,
+       RANDOM()
+     LIMIT ?`
+  ).all(...params) as Sample[]
+}
+
+export function deleteSample(sampleId: number, deleteFromDisk: boolean): { deleted: boolean; filePath?: string } {
+  const db = getDb()
+  const sample = db.prepare('SELECT id, file_path FROM samples WHERE id = ?').get(sampleId) as { id: number; file_path: string } | undefined
+  if (!sample) return { deleted: false }
+
+  // Remove from DB (cascades to taggables, search_index entries)
+  db.prepare('DELETE FROM taggables WHERE entity_type = ? AND entity_id = ?').run('sample', sampleId)
+  db.prepare('DELETE FROM samples WHERE id = ?').run(sampleId)
+
+  if (deleteFromDisk) {
+    try {
+      const fsPath = sample.file_path.replace(/\//g, '\\')
+      fs.unlinkSync(fsPath)
+    } catch (err) {
+      console.error(`[Sample] Failed to delete file: ${sample.file_path}`, err)
+    }
+  }
+
+  return { deleted: true, filePath: sample.file_path }
+}

@@ -10,8 +10,9 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { BrowserWindow } from 'electron'
 import { getDb } from './database.service'
-import { createProject } from './project.service'
+import { createProject, generateGroupKey } from './project.service'
 import { normalizePath } from '../utils/paths'
+import { extractPluginsFromAls } from './als-parser.service'
 import type { Daw } from '../db/schema'
 
 const watchers = new Map<number, chokidar.FSWatcher>()
@@ -48,7 +49,10 @@ export function importUnlinkedDawProjects(win: BrowserWindow): void {
   for (const dp of unlinked) {
     try {
       const title = dp.file_name.replace(/\.[^.]+$/, '')
-      const project = createProject({ title, dawProjectId: dp.id })
+      const groupKey = generateGroupKey(title)
+      const allProjects = db.prepare('SELECT title, stage FROM projects').all() as { title: string; stage: string }[]
+      const siblingStage = allProjects.find(p => generateGroupKey(p.title) === groupKey)?.stage
+      const project = createProject({ title, dawProjectId: dp.id, stage: siblingStage })
       notify(win, { event: 'add', dawProjectId: dp.id, projectId: project.id, fileName: dp.file_name })
     } catch (err) {
       console.error('[Watcher] importUnlinkedDawProjects error:', err)
@@ -145,7 +149,19 @@ function handleAdd(dawId: number, filePath: string, win: BrowserWindow): void {
 
     // Auto-create a project card — title derived from filename (no extension)
     const title = path.basename(filePath, path.extname(filePath))
-    const project = createProject({ title, dawProjectId })
+
+    // If a sibling project with the same group key already exists, inherit its stage
+    // so new versions stay in the same Kanban column (e.g. "In Progress")
+    const groupKey = generateGroupKey(title)
+    const allProjects = db.prepare('SELECT title, stage FROM projects').all() as { title: string; stage: string }[]
+    const siblingStage = allProjects.find(p => generateGroupKey(p.title) === groupKey)?.stage
+
+    const project = createProject({ title, dawProjectId, stage: siblingStage })
+
+    // Extract plugins from Ableton .als files
+    if (filePath.toLowerCase().endsWith('.als')) {
+      try { saveProjectPlugins(project.id, filePath) } catch { /* best-effort */ }
+    }
 
     notify(win, { event: 'add', dawProjectId, projectId: project.id, fileName })
   } catch (err) {
@@ -174,6 +190,14 @@ function handleChange(filePath: string, win: BrowserWindow): void {
       .prepare('SELECT id FROM daw_projects WHERE file_path = ?')
       .get(normalized) as { id: number } | undefined
 
+    // Re-extract plugins on change (user may have added/removed plugins)
+    if (filePath.toLowerCase().endsWith('.als') && row?.id) {
+      const project = db.prepare('SELECT id FROM projects WHERE daw_project_id = ?').get(row.id) as { id: number } | undefined
+      if (project) {
+        try { saveProjectPlugins(project.id, filePath) } catch { /* best-effort */ }
+      }
+    }
+
     notify(win, { event: 'change', dawProjectId: row?.id ?? 0, fileName: path.basename(filePath) })
   } catch (err) {
     console.error('[Watcher] handleChange error:', err)
@@ -198,6 +222,24 @@ function handleUnlink(filePath: string, win: BrowserWindow): void {
   } catch (err) {
     console.error('[Watcher] handleUnlink error:', err)
   }
+}
+
+/** Extract plugins from an .als file and save to project_plugins table */
+function saveProjectPlugins(projectId: number, alsPath: string): void {
+  const plugins = extractPluginsFromAls(alsPath)
+  if (plugins.length === 0) return
+
+  const db = getDb()
+  const upsert = db.prepare(
+    'INSERT OR REPLACE INTO project_plugins (project_id, plugin_name, format, file_name) VALUES (?, ?, ?, ?)'
+  )
+  const tx = db.transaction(() => {
+    for (const p of plugins) {
+      upsert.run(projectId, p.name, p.format, p.fileName ?? null)
+    }
+  })
+  tx()
+  console.log(`[Watcher] Extracted ${plugins.length} plugins from project ${projectId}`)
 }
 
 function notify(

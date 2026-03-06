@@ -67,13 +67,15 @@ export default memo(function WaveSurferWaveform({
     }
   }, [filePath, peaks, durationSec, height, accentColor])
 
-  // Sync store's currentTime → wavesurfer progress bar (updates ~20fps via rAF in the store)
-  const currentTime = useAudioPlayerStore((s) =>
-    s.currentFilePath === filePath ? s.currentTime : 0
-  )
+  // Imperatively sync store's currentTime → wavesurfer progress bar (bypasses React render cycle)
   useEffect(() => {
-    wsRef.current?.setTime(currentTime)
-  }, [currentTime])
+    const unsub = useAudioPlayerStore.subscribe((state) => {
+      if (state.currentFilePath === filePath && wsRef.current) {
+        wsRef.current.setTime(state.currentTime)
+      }
+    })
+    return unsub
+  }, [filePath])
 
   if (peaks.length === 0) {
     return <div className="bg-th-hover rounded-lg w-full" style={{ height }} />

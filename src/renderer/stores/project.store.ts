@@ -10,7 +10,7 @@ export interface Project {
   id: number
   title: string
   description: string | null
-  stage: 'idea' | 'in_progress' | 'mixing' | 'done'
+  stage: string
   sort_order: number
   bpm: number | null
   musical_key: string | null
@@ -121,15 +121,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     },
 
     moveProject: async (id, stage, sortOrder) => {
+      const prev = get().projects
       set((state) => ({
         projects: state.projects.map((p) =>
-          p.id === id ? { ...p, stage: stage as Project['stage'], sort_order: sortOrder } : p
+          p.id === id ? { ...p, stage, sort_order: sortOrder } : p
         )
       }))
       try {
         await window.api.project.moveStage(id, stage, sortOrder)
       } catch {
-        await get().fetchProjects()
+        // Revert to pre-move state, then refresh from DB
+        set({ projects: prev })
+        try { await get().fetchProjects() } catch { /* best-effort */ }
       }
     },
 

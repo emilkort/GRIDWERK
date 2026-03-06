@@ -104,8 +104,9 @@ let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 // Stale-while-revalidate: instant results on repeat visits; max 50 entries.
 
 const PAGE_SIZE = 100
+const CACHE_TTL = 2000 // 2 seconds — skip IPC if cache is fresh
 
-let _sampleCache = new LruMap<string, { samples: Sample[]; total: number }>(50)
+let _sampleCache = new LruMap<string, { samples: Sample[]; total: number; ts: number }>(50)
 
 export const useSampleStore = create<SampleStore>((set, get) => ({
   samples: [],
@@ -153,6 +154,8 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
     const cached = _sampleCache.get(cacheKey)
     if (cached) {
       set({ samples: cached.samples, totalFilteredCount: cached.total, hasMore: cached.samples.length < cached.total, loading: false })
+      // Skip IPC entirely if cache is fresh
+      if (Date.now() - cached.ts < CACHE_TTL) return
     } else {
       set({ loading: true })
     }
@@ -178,7 +181,7 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
       const result: { samples: Sample[]; total: number } = Array.isArray(raw)
         ? { samples: raw, total: raw.length }
         : raw as { samples: Sample[]; total: number }
-      _sampleCache.set(cacheKey, result)
+      _sampleCache.set(cacheKey, { ...result, ts: Date.now() })
       set({ samples: result.samples, totalFilteredCount: result.total, hasMore: result.samples.length < result.total, loading: false })
     } catch {
       set({ loading: false })
@@ -218,7 +221,7 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
 
       // Update cache with accumulated result
       const cacheKey = JSON.stringify({ folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter })
-      _sampleCache.set(cacheKey, { samples: merged, total: result.total })
+      _sampleCache.set(cacheKey, { samples: merged, total: result.total, ts: Date.now() })
     } catch { /* ignore */ }
   },
 
@@ -325,19 +328,26 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
 
   toggleFavorite: async (sampleId: number) => {
     // Optimistic update — instant UI feedback
-    set((state) => {
-      const flip = (s: Sample) =>
-        s.id === sampleId ? { ...s, is_favorite: s.is_favorite ? 0 : 1 } : s
-      return {
-        samples: state.samples.map(flip),
-        selectedSample: state.selectedSample ? flip(state.selectedSample) : null
-      }
+    const flip = (s: Sample) =>
+      s.id === sampleId ? { ...s, is_favorite: s.is_favorite ? 0 : 1 } : s
+
+    set((state) => ({
+      samples: state.samples.map(flip),
+      selectedSample: state.selectedSample ? flip(state.selectedSample) : null
+    }))
+
+    // Patch all cache entries in-place (no clear + refetch)
+    _sampleCache.forEach((entry) => {
+      entry.samples = entry.samples.map(flip)
     })
+
     try {
       await window.api.sample.toggleFavorite(sampleId)
-      _sampleCache.clear()
-      // Silent background refresh for consistency (esp. in isFavorites view)
-      get().fetchSamples()
+      // Only refetch when viewing favorites filter (item should appear/disappear)
+      if (get().filters.isFavorites) {
+        _sampleCache.clear()
+        get().fetchSamples()
+      }
     } catch {
       // Revert on failure
       _sampleCache.clear()

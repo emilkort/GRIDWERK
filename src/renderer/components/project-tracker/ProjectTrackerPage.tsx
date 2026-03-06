@@ -470,6 +470,11 @@ export default function ProjectTrackerPage() {
     setNewProjectOpen(true)
   }
 
+  const songCount = useMemo(() => {
+    const keys = new Set(projects.map(p => p.group_key || p.title))
+    return keys.size
+  }, [projects])
+
   const isFiltered = search.trim() !== '' || dawFilter !== 'all'
 
   if ((loading && projects.length === 0) || !stagesLoaded) {
@@ -485,7 +490,7 @@ export default function ProjectTrackerPage() {
           <p className="text-text-muted text-[10px] mt-1.5 tracking-wider uppercase">
             {isFiltered
               ? `${filteredProjects.length} of ${projects.length} projects`
-              : `${projects.length} project${projects.length !== 1 ? 's' : ''} across all stages`}
+              : `${songCount} song${songCount !== 1 ? 's' : ''} · ${projects.length} project file${projects.length !== 1 ? 's' : ''} across all stages`}
           </p>
         </div>
 

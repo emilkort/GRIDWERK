@@ -16,5 +16,8 @@ export class LruMap<K, V> {
       this.map.delete(this.map.keys().next().value!)
     }
   }
+  forEach(fn: (value: V, key: K) => void): void {
+    this.map.forEach(fn)
+  }
   clear(): void { this.map.clear() }
 }

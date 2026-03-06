@@ -4,6 +4,8 @@ import * as fs from 'fs'
 import { normalizePath, resolveLnkTarget } from '../utils/paths'
 import type { VstScanPath, VstPlugin } from '../db/schema'
 import { BrowserWindow } from 'electron'
+import { inferCategoryFromName } from '../utils/category-inference'
+import { lookupPluginVendor } from '../utils/plugin-vendor-lookup'
 
 // VST3 SDK Sub_Categories → human-readable subcategory
 // Handles both compound ("Fx|EQ") and individual ("EQ") entries
@@ -117,6 +119,49 @@ export function mapVst3Subcategories(
   return { category, subcategory }
 }
 
+/** Parse a single VST file/bundle and return metadata. Returns null if stat fails. */
+export function parseVstFile(
+  fullPath: string,
+  format: 'VST2' | 'VST3'
+): { filePath: string; name: string; size: number; mtime: number; vendor: string | null; category: string; subcategory: string | null } | null {
+  if (format === 'VST3') {
+    const pluginName = path.basename(fullPath, '.vst3')
+    let vendor: string | null = lookupPluginVendor(pluginName)
+    let category = 'Unknown'
+    let subcategory: string | null = null
+
+    const moduleInfoPath = path.join(fullPath, 'Contents', 'moduleinfo.json')
+    if (fs.existsSync(moduleInfoPath)) {
+      try {
+        const info = JSON.parse(fs.readFileSync(moduleInfoPath, 'utf-8'))
+        const factoryInfo = info['Factory Info'] || {}
+        if (!vendor) vendor = factoryInfo.Vendor || info.Vendor || null
+        if (info.Classes && info.Classes.length > 0) {
+          const cls = info.Classes[0]
+          if (cls.Sub_Categories) {
+            const mapped = mapVst3Subcategories(cls.Sub_Categories)
+            category = mapped.category
+            subcategory = mapped.subcategory
+          }
+        }
+      } catch { /* Can't parse moduleinfo */ }
+    }
+
+    try {
+      const stat = fs.statSync(fullPath)
+      return { filePath: normalizePath(fullPath), name: pluginName, size: stat.size, mtime: Math.floor(stat.mtimeMs / 1000), vendor, category, subcategory }
+    } catch { return null }
+  } else {
+    // VST2 DLL
+    const pluginName = path.basename(fullPath, '.dll')
+    const vendor = lookupPluginVendor(pluginName)
+    try {
+      const stat = fs.statSync(fullPath)
+      return { filePath: normalizePath(fullPath), name: pluginName, size: stat.size, mtime: Math.floor(stat.mtimeMs / 1000), vendor, category: 'Unknown', subcategory: null }
+    } catch { return null }
+  }
+}
+
 export function addScanPath(data: { folderPath: string; format: 'VST2' | 'VST3' }): VstScanPath {
   const db = getDb()
   const result = db
@@ -166,6 +211,19 @@ export function scanVstPath(scanPathId: number, win?: BrowserWindow | null): Vst
 
   insertAll()
 
+  // Apply keyword-based category inference for plugins still showing Unknown
+  const unknownPlugins = db.prepare(
+    'SELECT * FROM vst_plugins WHERE scan_path_id = ? AND (category IS NULL OR category = ?)'
+  ).all(scanPathId, 'Unknown') as VstPlugin[]
+
+  const updateCat = db.prepare('UPDATE vst_plugins SET category = ?, subcategory = COALESCE(subcategory, ?) WHERE id = ?')
+  for (const p of unknownPlugins) {
+    const inferred = inferCategoryFromName(p.plugin_name, p.vendor)
+    if (inferred) {
+      updateCat.run(inferred.category, inferred.subcategory, p.id)
+    }
+  }
+
   return db.prepare('SELECT * FROM vst_plugins WHERE scan_path_id = ? ORDER BY plugin_name').all(scanPathId) as VstPlugin[]
 }
 
@@ -197,41 +255,8 @@ function walkVstDirectory(
     const fullPath = path.join(dir, entry.name)
 
     if (entry.name.toLowerCase().endsWith('.vst3')) {
-      const pluginName = path.basename(entry.name, '.vst3')
-      let vendor: string | null = null
-      let category = 'Unknown'
-      let subcategory: string | null = null
-
-      const moduleInfoPath = path.join(fullPath, 'Contents', 'moduleinfo.json')
-      if (fs.existsSync(moduleInfoPath)) {
-        try {
-          const info = JSON.parse(fs.readFileSync(moduleInfoPath, 'utf-8'))
-          if (info.Vendor) vendor = info.Vendor
-          if (info.Classes && info.Classes.length > 0) {
-            const cls = info.Classes[0]
-            if (cls.Sub_Categories) {
-              const mapped = mapVst3Subcategories(cls.Sub_Categories)
-              category = mapped.category
-              subcategory = mapped.subcategory
-            }
-          }
-        } catch {
-          // Can't parse moduleinfo
-        }
-      }
-
-      try {
-        const stat = fs.statSync(fullPath)
-        results.push({
-          filePath: normalizePath(fullPath),
-          name: pluginName,
-          size: stat.size,
-          mtime: Math.floor(stat.mtimeMs / 1000),
-          vendor,
-          category,
-          subcategory
-        })
-      } catch { /* skip */ }
+      const parsed = parseVstFile(fullPath, 'VST3')
+      if (parsed) results.push(parsed)
     } else if (entry.isDirectory() || entry.isSymbolicLink()) {
       // Follow real directories, symlinks, and junction points
       if (entry.isSymbolicLink()) {
@@ -244,19 +269,8 @@ function walkVstDirectory(
       }
       walkVstDirectory(fullPath, ext, format, results, visited)
     } else if (format === 'VST2' && entry.name.toLowerCase().endsWith('.dll')) {
-      const pluginName = path.basename(entry.name, '.dll')
-      try {
-        const stat = fs.statSync(fullPath)
-        results.push({
-          filePath: normalizePath(fullPath),
-          name: pluginName,
-          size: stat.size,
-          mtime: Math.floor(stat.mtimeMs / 1000),
-          vendor: null,
-          category: 'Unknown',
-          subcategory: null
-        })
-      } catch { /* skip */ }
+      const parsed = parseVstFile(fullPath, 'VST2')
+      if (parsed) results.push(parsed)
     } else if (entry.name.toLowerCase().endsWith('.lnk')) {
       // Windows .lnk shortcuts — resolve and recurse if target is a directory
       const target = resolveLnkTarget(fullPath)
@@ -281,7 +295,7 @@ export function listPlugins(filters?: {
   search?: string
 }): VstPlugin[] {
   const db = getDb()
-  let sql = 'SELECT * FROM vst_plugins WHERE 1=1'
+  let sql = 'SELECT * FROM vst_plugins WHERE is_hidden = 0'
   const params: any[] = []
 
   if (filters?.category && filters.category !== 'All') {
@@ -310,4 +324,12 @@ export function toggleFavorite(pluginId: number): void {
 
 export function updateCategory(pluginId: number, category: string): void {
   getDb().prepare('UPDATE vst_plugins SET category = ? WHERE id = ?').run(category, pluginId)
+}
+
+export function setHidden(pluginId: number, hidden: boolean): void {
+  getDb().prepare('UPDATE vst_plugins SET is_hidden = ? WHERE id = ?').run(hidden ? 1 : 0, pluginId)
+}
+
+export function listHiddenPlugins(): VstPlugin[] {
+  return getDb().prepare('SELECT * FROM vst_plugins WHERE is_hidden = 1 ORDER BY plugin_name').all() as VstPlugin[]
 }

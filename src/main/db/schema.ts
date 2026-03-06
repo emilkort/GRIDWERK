@@ -44,6 +44,7 @@ export interface VstPlugin {
   website: string | null
   enriched: number
   is_favorite: number
+  is_hidden: number
   file_size: number | null
   last_modified: number | null
   created_at: number
@@ -115,6 +116,23 @@ export interface Taggable {
   tag_id: number
   entity_type: 'sample' | 'vst' | 'project' | 'daw_project'
   entity_id: number
+}
+
+export interface PluginReference {
+  id: number
+  name: string
+  normalized_name: string
+  vendor: string | null
+  category: string | null
+  subcategory: string | null
+  description: string | null
+  image_url: string | null
+  website: string | null
+  formats: string | null // JSON array of format strings
+  tags: string | null // JSON array of tag strings
+  source: string // 'vst-guide-api' | 'pluginboutique' | 'manual'
+  created_at: number
+  updated_at: number
 }
 
 export interface Setting {

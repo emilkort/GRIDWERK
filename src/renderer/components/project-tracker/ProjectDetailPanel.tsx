@@ -2,6 +2,21 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useProjectStore, type Project, type ProjectTodo } from '@/stores/project.store'
 import { useStageStore } from '@/stores/stage.store'
 
+interface ProjectPlugin {
+  id: number
+  plugin_name: string
+  format: string | null
+  file_name: string | null
+}
+
+interface MatchingSample {
+  id: number
+  file_name: string
+  bpm: number | null
+  musical_key: string | null
+  category: string | null
+}
+
 const COLOR_SWATCHES = [
   '#8b5cf6', '#3b82f6', '#22c55e', '#f97316', '#ec4899', '#ef4444'
 ]
@@ -116,6 +131,28 @@ export default function ProjectDetailPanel({ project, onClose }: Props) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
+
+  // ── Plugins from DAW project ────────────────────────────────────────────
+  const [plugins, setPlugins] = useState<ProjectPlugin[]>([])
+  useEffect(() => {
+    if (project.daw_project_id) {
+      window.api.project.getPlugins(project.id).then(setPlugins).catch(() => setPlugins([]))
+    } else {
+      setPlugins([])
+    }
+  }, [project.id, project.daw_project_id])
+
+  // ── Matching samples (BPM/key aware) ──────────────────────────────────
+  const [matchingSamples, setMatchingSamples] = useState<MatchingSample[]>([])
+  useEffect(() => {
+    if (project.bpm || project.musical_key) {
+      window.api.sample.findMatching(project.bpm ?? null, project.musical_key ?? null)
+        .then((samples: MatchingSample[]) => setMatchingSamples(samples.slice(0, 8)))
+        .catch(() => setMatchingSamples([]))
+    } else {
+      setMatchingSamples([])
+    }
+  }, [project.id, project.bpm, project.musical_key])
 
   const stageInfo = stages.find((s) => s.slug === project.stage) ?? stages[0]
 
@@ -296,6 +333,59 @@ export default function ProjectDetailPanel({ project, onClose }: Props) {
                       {formatDate(s.daw_last_modified)}
                     </span>
                   )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Plugins Used ──────────────────────────────────────────────── */}
+        {plugins.length > 0 && (
+          <div className="px-5 py-4 border-b border-border">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted mb-2">
+              Plugins Used ({plugins.length})
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {plugins.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-elevated border border-border text-[10px]"
+                  title={p.file_name ?? p.plugin_name}
+                >
+                  <span className="text-text font-medium truncate max-w-[180px]">{p.plugin_name}</span>
+                  {p.format && (
+                    <span className="text-[8px] font-bold uppercase tracking-wider px-1 py-0.5 shrink-0"
+                      style={{
+                        color: p.format === 'VST3' ? '#3b82f6' : '#f97316',
+                        background: p.format === 'VST3' ? '#3b82f610' : '#f9731610',
+                        border: `1px solid ${p.format === 'VST3' ? '#3b82f630' : '#f9731630'}`
+                      }}
+                    >{p.format}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Matching Samples ────────────────────────────────────────────── */}
+        {matchingSamples.length > 0 && (
+          <div className="px-5 py-4 border-b border-border">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted mb-2">
+              Matching Samples
+            </p>
+            <p className="text-[9px] text-text-dark mb-2">
+              Samples that match {project.bpm ? `${project.bpm} BPM` : ''}{project.bpm && project.musical_key ? ' + ' : ''}{project.musical_key ?? ''}
+            </p>
+            <div className="space-y-1">
+              {matchingSamples.map((s) => (
+                <div key={s.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-surface transition-colors">
+                  <svg className="w-3 h-3 text-text-dark shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                  </svg>
+                  <span className="text-[10px] text-text truncate flex-1">{s.file_name}</span>
+                  {s.bpm && <span className="text-[9px] text-text-dark shrink-0">{Math.round(s.bpm)} bpm</span>}
+                  {s.musical_key && <span className="text-[9px] text-text-dark shrink-0">{s.musical_key}</span>}
                 </div>
               ))}
             </div>

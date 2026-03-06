@@ -1,11 +1,17 @@
 import { getDb } from './database.service'
+import { generateGroupKey } from './project.service'
 
 export interface AnalyticsData {
   totals: {
     samples: number
     projects: number
+    songs: number
     vsts: number
     analyzedPercent: number
+    vstEnrichedPercent: number
+    favoriteSamples: number
+    favoriteVsts: number
+    totalDiskMb: number
   }
   projectsByStage: { stage: string; count: number }[]
   projectsPerMonth: { month: string; count: number }[]
@@ -14,6 +20,15 @@ export interface AnalyticsData {
   samplesByKey: { key: string; count: number }[]
   samplesByBpmRange: { range: string; count: number }[]
   topTags: { name: string; color: string; count: number }[]
+  vstsByFormat: { format: string; count: number }[]
+  vstsByVendor: { vendor: string; count: number }[]
+  vstsByCategory: { category: string; count: number }[]
+  recentVsts: { plugin_name: string; vendor: string | null; category: string | null; icon_url: string | null }[]
+  completionRate: number
+  avgVersionsPerSong: number
+  mostProductiveDay: { day: string; count: number } | null
+  topSampleFormats: { format: string; count: number }[]
+  recentProjects: { title: string; stage: string; created_at: number }[]
 }
 
 export function getAnalyticsData(): AnalyticsData {
@@ -22,9 +37,20 @@ export function getAnalyticsData(): AnalyticsData {
   // Totals
   const totalSamples = (db.prepare('SELECT COUNT(*) as c FROM samples').get() as { c: number }).c
   const totalProjects = (db.prepare('SELECT COUNT(*) as c FROM projects').get() as { c: number }).c
-  const totalVsts = (db.prepare('SELECT COUNT(*) as c FROM vst_plugins').get() as { c: number }).c
+  const totalVsts = (db.prepare('SELECT COUNT(*) as c FROM vst_plugins WHERE is_hidden = 0').get() as { c: number }).c
   const analyzedCount = (db.prepare('SELECT COUNT(*) as c FROM samples WHERE waveform_data IS NOT NULL').get() as { c: number }).c
   const analyzedPercent = totalSamples > 0 ? Math.round((analyzedCount / totalSamples) * 100) : 0
+
+  // Songs = unique group keys (distinct songs across all project versions)
+  let totalSongs = 0
+  try {
+    const allTitles = db.prepare('SELECT title FROM projects').all() as { title: string }[]
+    const uniqueGroupKeys = new Set(allTitles.map(r => generateGroupKey(r.title)))
+    totalSongs = uniqueGroupKeys.size
+  } catch (err) {
+    console.error('[Analytics] Failed to compute song count:', err)
+    totalSongs = totalProjects // fallback to project count
+  }
 
   // Projects by stage
   const projectsByStage = db.prepare(
@@ -82,14 +108,98 @@ export function getAnalyticsData(): AnalyticsData {
      GROUP BY t.id ORDER BY count DESC LIMIT 20`
   ).all() as { name: string; color: string; count: number }[]
 
+  // VSTs by format (VST2 vs VST3)
+  const vstsByFormat = db.prepare(
+    `SELECT format, COUNT(*) as count FROM vst_plugins WHERE is_hidden = 0 GROUP BY format ORDER BY count DESC`
+  ).all() as { format: string; count: number }[]
+
+  // VSTs by vendor (top 15)
+  const vstsByVendor = db.prepare(
+    `SELECT COALESCE(vendor, 'Unknown') as vendor, COUNT(*) as count
+     FROM vst_plugins WHERE is_hidden = 0 GROUP BY vendor ORDER BY count DESC LIMIT 15`
+  ).all() as { vendor: string; count: number }[]
+
+  // VSTs by category
+  const vstsByCategory = db.prepare(
+    `SELECT COALESCE(category, 'Unknown') as category, COUNT(*) as count
+     FROM vst_plugins WHERE is_hidden = 0 GROUP BY category ORDER BY count DESC`
+  ).all() as { category: string; count: number }[]
+
+  // Extra totals
+  const enrichedVsts = (db.prepare('SELECT COUNT(*) as c FROM vst_plugins WHERE is_hidden = 0 AND enriched = 1').get() as { c: number }).c
+  const vstEnrichedPercent = totalVsts > 0 ? Math.round((enrichedVsts / totalVsts) * 100) : 0
+  const favoriteSamples = (db.prepare('SELECT COUNT(*) as c FROM samples WHERE is_favorite = 1').get() as { c: number }).c
+  const favoriteVsts = (db.prepare('SELECT COUNT(*) as c FROM vst_plugins WHERE is_hidden = 0 AND is_favorite = 1').get() as { c: number }).c
+  const totalDiskBytes = (db.prepare('SELECT COALESCE(SUM(file_size), 0) as s FROM samples').get() as { s: number }).s
+    + (db.prepare('SELECT COALESCE(SUM(file_size), 0) as s FROM vst_plugins WHERE is_hidden = 0').get() as { s: number }).s
+  const totalDiskMb = Math.round(totalDiskBytes / (1024 * 1024))
+
+  // Recently added VSTs (last 10)
+  const recentVsts = db.prepare(
+    `SELECT plugin_name, vendor, category, icon_url FROM vst_plugins
+     WHERE is_hidden = 0 ORDER BY created_at DESC LIMIT 10`
+  ).all() as { plugin_name: string; vendor: string | null; category: string | null; icon_url: string | null }[]
+
+  // Completion rate: % of unique songs that have at least one "done" project
+  let completionRate = 0
+  try {
+    const allProjects = db.prepare('SELECT title, stage FROM projects').all() as { title: string; stage: string }[]
+    const songStages = new Map<string, Set<string>>()
+    for (const p of allProjects) {
+      const key = generateGroupKey(p.title)
+      if (!songStages.has(key)) songStages.set(key, new Set())
+      songStages.get(key)!.add(p.stage)
+    }
+    const totalUniqueSongs = songStages.size
+    const doneSongs = [...songStages.values()].filter(stages => stages.has('done')).length
+    completionRate = totalUniqueSongs > 0 ? Math.round((doneSongs / totalUniqueSongs) * 100) : 0
+  } catch { /* ignore */ }
+
+  // Average versions per song
+  const avgVersionsPerSong = totalSongs > 0 ? Math.round((totalProjects / totalSongs) * 10) / 10 : 0
+
+  // Most productive day of week
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  let mostProductiveDay: { day: string; count: number } | null = null
+  try {
+    const dayRow = db.prepare(
+      `SELECT CAST(strftime('%w', created_at, 'unixepoch') AS INTEGER) as dow, COUNT(*) as count
+       FROM projects GROUP BY dow ORDER BY count DESC LIMIT 1`
+    ).get() as { dow: number; count: number } | undefined
+    if (dayRow) {
+      mostProductiveDay = { day: dayNames[dayRow.dow], count: dayRow.count }
+    }
+  } catch { /* ignore */ }
+
+  // Top sample file formats
+  const topSampleFormats = db.prepare(
+    `SELECT LOWER(file_extension) as format, COUNT(*) as count
+     FROM samples WHERE file_extension IS NOT NULL AND file_extension != ''
+     GROUP BY format ORDER BY count DESC LIMIT 8`
+  ).all() as { format: string; count: number }[]
+
+  // Recent projects (last 5)
+  const recentProjects = db.prepare(
+    `SELECT title, stage, created_at FROM projects ORDER BY created_at DESC LIMIT 5`
+  ).all() as { title: string; stage: string; created_at: number }[]
+
   return {
-    totals: { samples: totalSamples, projects: totalProjects, vsts: totalVsts, analyzedPercent },
+    totals: { samples: totalSamples, projects: totalProjects, songs: totalSongs, vsts: totalVsts, analyzedPercent, vstEnrichedPercent, favoriteSamples, favoriteVsts, totalDiskMb },
     projectsByStage,
     projectsPerMonth,
     dawUsage,
     samplesByCategory,
     samplesByKey,
     samplesByBpmRange,
-    topTags
+    topTags,
+    vstsByFormat,
+    vstsByVendor,
+    vstsByCategory,
+    recentVsts,
+    completionRate,
+    avgVersionsPerSong,
+    mostProductiveDay,
+    topSampleFormats,
+    recentProjects
   }
 }

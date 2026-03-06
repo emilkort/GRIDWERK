@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useProjectStore } from '@/stores/project.store'
+import { useStageStore } from '@/stores/stage.store'
 import type { Project } from '@/stores/project.store'
 
 interface EditProjectDialogProps {
@@ -8,13 +9,6 @@ interface EditProjectDialogProps {
   open: boolean
   onClose: () => void
 }
-
-const STAGES = [
-  { value: 'idea', label: 'Idea', color: '#3b82f6' },
-  { value: 'in_progress', label: 'In Progress', color: '#f97316' },
-  { value: 'mixing', label: 'Mixing', color: '#8b5cf6' },
-  { value: 'done', label: 'Done', color: '#22c55e' }
-]
 
 const COLOR_SWATCHES = [
   { value: '#8b5cf6', label: 'Purple' },
@@ -42,6 +36,7 @@ const MUSICAL_KEYS = buildMusicalKeys()
 
 export default function EditProjectDialog({ project, open, onClose }: EditProjectDialogProps) {
   const updateProject = useProjectStore((s) => s.updateProject)
+  const stages = useStageStore((s) => s.stages)
 
   const [title, setTitle] = useState(project.title)
   const [description, setDescription] = useState(project.description || '')
@@ -120,18 +115,18 @@ export default function EditProjectDialog({ project, open, onClose }: EditProjec
         <div className="mb-5">
           <label className="block text-[11px] font-bold text-text-dark uppercase tracking-widest mb-2">Stage</label>
           <div className="flex gap-2">
-            {STAGES.map((s) => (
+            {stages.map((s) => (
               <button
-                key={s.value}
-                onClick={() => setStage(s.value)}
+                key={s.slug}
+                onClick={() => setStage(s.slug)}
                 className={`flex items-center gap-2 px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded transition-all duration-200 border ${
-                  stage === s.value
+                  stage === s.slug
                     ? 'border-accent bg-transparent text-accent'
                     : 'border-transparent bg-elevated text-text-dark hover:text-text'
                 }`}
               >
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-                {s.label}
+                {s.name}
               </button>
             ))}
           </div>

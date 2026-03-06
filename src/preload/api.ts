@@ -32,10 +32,17 @@ export const producerApi = {
       ipcRenderer.invoke('vst:update-category', pluginId, category),
     deleteScanPath: (scanPathId: number) =>
       ipcRenderer.invoke('vst:delete-scan-path', scanPathId),
+    setHidden: (pluginId: number, hidden: boolean) =>
+      ipcRenderer.invoke('vst:set-hidden', pluginId, hidden),
+    listHidden: () => ipcRenderer.invoke('vst:list-hidden'),
     enrichAll: () =>
       ipcRenderer.invoke('vst:enrich-all') as Promise<{ enriched: number; total: number }>,
     enrichSingle: (pluginId: number) =>
-      ipcRenderer.invoke('vst:enrich-single', pluginId)
+      ipcRenderer.invoke('vst:enrich-single', pluginId),
+    syncReferenceLibrary: () =>
+      ipcRenderer.invoke('vst:sync-reference-library') as Promise<{ added: number; updated: number; total: number }>,
+    getReferenceStats: () =>
+      ipcRenderer.invoke('vst:reference-stats') as Promise<{ total: number; sources: Record<string, number> }>
   },
 
   // Sample Library
@@ -81,7 +88,13 @@ export const producerApi = {
       ipcRenderer.invoke('sample:find-duplicates') as Promise<{
         exact: { hash: string; samples: { id: number; file_name: string; file_path: string; file_size: number | null }[] }[]
         near: { samples: { id: number; file_name: string; file_path: string; file_size: number | null; similarity: number }[] }[]
-      }>
+      }>,
+    autoTag: () =>
+      ipcRenderer.invoke('sample:auto-tag') as Promise<{ tagged: number; tagsCreated: number }>,
+    findMatching: (bpm: number | null, key: string | null) =>
+      ipcRenderer.invoke('sample:find-matching', bpm, key) as Promise<any[]>,
+    delete: (sampleId: number, deleteFromDisk: boolean) =>
+      ipcRenderer.invoke('sample:delete', sampleId, deleteFromDisk) as Promise<{ deleted: boolean; filePath?: string }>
   },
 
   // Project Tracker
@@ -109,7 +122,11 @@ export const producerApi = {
     updateTodo: (todoId: number, changes: { text?: string; done?: boolean }) =>
       ipcRenderer.invoke('project:update-todo', todoId, changes) as Promise<any>,
     deleteTodo: (todoId: number) =>
-      ipcRenderer.invoke('project:delete-todo', todoId) as Promise<void>
+      ipcRenderer.invoke('project:delete-todo', todoId) as Promise<void>,
+    getPlugins: (projectId: number) =>
+      ipcRenderer.invoke('project:get-plugins', projectId) as Promise<
+        { id: number; plugin_name: string; format: string | null; file_name: string | null }[]
+      >
   },
 
   // Tags
@@ -141,9 +158,9 @@ export const producerApi = {
     getData: () => ipcRenderer.invoke('analytics:get-data')
   },
 
-  // Recommendations
-  recommendations: {
-    getVst: () => ipcRenderer.invoke('recommendations:get-vst')
+  // Discover
+  discover: {
+    getData: () => ipcRenderer.invoke('discover:get-data')
   },
 
   // Search
@@ -163,6 +180,11 @@ export const producerApi = {
     pickFolder: () => ipcRenderer.invoke('dialog:pick-folder'),
     pickFile: (filters?: { name: string; extensions: string[] }[]) =>
       ipcRenderer.invoke('dialog:pick-file', filters)
+  },
+
+  // Shell
+  shell: {
+    showInFolder: (filePath: string) => ipcRenderer.invoke('shell:show-in-folder', filePath)
   },
 
   // Native drag
@@ -230,6 +252,30 @@ export const producerApi = {
       const handler = (_: any, data: any) => callback(data)
       ipcRenderer.on('project:daw-changed', handler)
       return () => ipcRenderer.removeListener('project:daw-changed', handler)
+    },
+    // Fired when a VST plugin is added / removed on disk
+    vstPluginChanged: (
+      callback: (data: {
+        event: 'add' | 'unlink'
+        pluginId?: number
+        pluginName: string
+        filePath: string
+      }) => void
+    ) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('vst:plugin-changed', handler)
+      return () => ipcRenderer.removeListener('vst:plugin-changed', handler)
+    },
+    mainLog: (
+      callback: (data: {
+        level: string
+        message: string
+        timestamp: number
+      }) => void
+    ) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('main:log', handler)
+      return () => ipcRenderer.removeListener('main:log', handler)
     }
   }
 }

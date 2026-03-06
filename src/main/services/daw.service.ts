@@ -4,6 +4,7 @@ import { promisify } from 'util'
 import * as path from 'path'
 import * as fs from 'fs'
 import { normalizePath } from '../utils/paths'
+import { extractPluginsFromAls } from './als-parser.service'
 import type { Daw, DawProject } from '../db/schema'
 
 const execFileAsync = promisify(execFile)
@@ -86,6 +87,30 @@ export function scanProjects(dawId: number): DawProject[] {
   }
 
   insertMany(files)
+
+  // Extract plugins from Ableton .als files
+  if (ext.toLowerCase() === '.als') {
+    const upsert = db.prepare(
+      'INSERT OR REPLACE INTO project_plugins (project_id, plugin_name, format, file_name) VALUES (?, ?, ?, ?)'
+    )
+    const allDawProjects = db.prepare(
+      `SELECT dp.id as dpId, dp.file_path, p.id as projectId
+       FROM daw_projects dp JOIN projects p ON p.daw_project_id = dp.id
+       WHERE dp.daw_id = ?`
+    ).all(dawId) as { dpId: number; file_path: string; projectId: number }[]
+
+    for (const dp of allDawProjects) {
+      try {
+        // Resolve to actual filesystem path (stored paths use forward slashes)
+        const fsPath = dp.file_path.replace(/\//g, '\\')
+        if (!fs.existsSync(fsPath)) continue
+        const plugins = extractPluginsFromAls(fsPath)
+        for (const p of plugins) {
+          upsert.run(dp.projectId, p.name, p.format, p.fileName ?? null)
+        }
+      } catch { /* skip unreadable files */ }
+    }
+  }
 
   return db.prepare('SELECT * FROM daw_projects WHERE daw_id = ? ORDER BY last_modified DESC').all(dawId) as DawProject[]
 }

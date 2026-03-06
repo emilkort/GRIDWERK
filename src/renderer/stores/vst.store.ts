@@ -14,6 +14,7 @@ export interface VstPlugin {
   website: string | null
   enriched: number
   is_favorite: number
+  is_hidden: number
   file_size: number | null
   last_modified: number | null
   created_at: number
@@ -27,21 +28,27 @@ export interface VstScanPath {
   enabled: number
 }
 
+export type VstGroupBy = 'none' | 'vendor' | 'category' | 'format'
+
 interface VstFilters {
   category: string
   subcategory: string
   favorite: boolean
   search: string
+  vendor: string
+  groupBy: VstGroupBy
 }
 
 interface VstStore {
   plugins: VstPlugin[]
   scanPaths: VstScanPath[]
   filters: VstFilters
+  selectedPlugin: VstPlugin | null
   loading: boolean
   scanning: boolean
   enriching: boolean
   enrichProgress: { current: number; total: number; currentFile: string } | null
+  syncingLibrary: boolean
   fetchPlugins: () => Promise<void>
   fetchScanPaths: () => Promise<void>
   addScanPath: (folderPath: string, format: 'VST2' | 'VST3') => Promise<void>
@@ -50,21 +57,41 @@ interface VstStore {
   toggleFavorite: (pluginId: number) => Promise<void>
   setFilters: (filters: Partial<VstFilters>) => void
   enrichAll: () => Promise<void>
+  syncReferenceLibrary: () => Promise<void>
+  selectPlugin: (plugin: VstPlugin | null) => void
+  enrichSingle: (pluginId: number) => Promise<void>
+  hidePlugin: (pluginIds: number[]) => Promise<void>
+  hiddenPlugins: VstPlugin[]
+  hiddenLoading: boolean
+  fetchHiddenPlugins: () => Promise<void>
+  unhidePlugin: (pluginId: number) => Promise<void>
 }
 
-export const useVstStore = create<VstStore>((set, get) => ({
+export const useVstStore = create<VstStore>((set, get) => {
+  // Auto-refresh plugin list when the watcher detects changes on disk
+  if (typeof window !== 'undefined' && window.api?.on?.vstPluginChanged) {
+    window.api.on.vstPluginChanged(() => {
+      get().fetchPlugins()
+    })
+  }
+
+  return {
   plugins: [],
   scanPaths: [],
   filters: {
     category: 'All',
     subcategory: 'All',
     favorite: false,
-    search: ''
+    search: '',
+    vendor: '',
+    groupBy: 'vendor' as VstGroupBy
   },
+  selectedPlugin: null,
   loading: false,
   scanning: false,
   enriching: false,
   enrichProgress: null,
+  syncingLibrary: false,
 
   fetchPlugins: async () => {
     set({ loading: true })
@@ -131,5 +158,62 @@ export const useVstStore = create<VstStore>((set, get) => ({
     } finally {
       set({ enriching: false, enrichProgress: null })
     }
+  },
+
+  syncReferenceLibrary: async () => {
+    set({ syncingLibrary: true })
+    try {
+      const result = await window.api.vst.syncReferenceLibrary()
+      console.log(`Reference library synced: ${result.total} plugins`)
+    } finally {
+      set({ syncingLibrary: false })
+    }
+  },
+
+  selectPlugin: (plugin: VstPlugin | null) => {
+    set({ selectedPlugin: plugin })
+  },
+
+  enrichSingle: async (pluginId: number) => {
+    await window.api.vst.enrichSingle(pluginId)
+    // Refresh plugin list and update selected plugin
+    await get().fetchPlugins()
+    const updated = get().plugins.find((p) => p.id === pluginId)
+    if (updated) set({ selectedPlugin: updated })
+  },
+
+  hidePlugin: async (pluginIds: number[]) => {
+    for (const id of pluginIds) {
+      await window.api.vst.setHidden(id, true)
+    }
+    // Remove from local state immediately
+    set((state) => ({
+      plugins: state.plugins.filter((p) => !pluginIds.includes(p.id)),
+      selectedPlugin: state.selectedPlugin && pluginIds.includes(state.selectedPlugin.id)
+        ? null
+        : state.selectedPlugin
+    }))
+  },
+
+  hiddenPlugins: [],
+  hiddenLoading: false,
+
+  fetchHiddenPlugins: async () => {
+    set({ hiddenLoading: true })
+    try {
+      const hiddenPlugins = await window.api.vst.listHidden()
+      set({ hiddenPlugins })
+    } finally {
+      set({ hiddenLoading: false })
+    }
+  },
+
+  unhidePlugin: async (pluginId: number) => {
+    await window.api.vst.setHidden(pluginId, false)
+    set((state) => ({
+      hiddenPlugins: state.hiddenPlugins.filter((p) => p.id !== pluginId)
+    }))
+    // Refresh main list so the unhidden plugin appears
+    await get().fetchPlugins()
   }
-}))
+}})

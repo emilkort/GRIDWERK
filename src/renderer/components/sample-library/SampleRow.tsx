@@ -1,7 +1,8 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import type { Sample } from '@/stores/sample.store'
 import { useSampleStore } from '@/stores/sample.store'
 import { useAudioPlayerStore } from '@/stores/audioPlayer.store'
+import { useShallow } from 'zustand/react/shallow'
 import WaveformPreview from './WaveformPreview'
 import useWaveform from '@/hooks/useWaveform'
 import { getCamelotColor, getCamelotLabel, isCompatibleKey } from '@/utils/camelot'
@@ -10,9 +11,10 @@ interface SampleRowProps {
   sample: Sample
   isSelected: boolean
   isMultiSelected: boolean
-  multiSelectedPaths?: string[]
+  getMultiSelectedPaths: () => string[]
   onSelect: (sample: Sample) => void
-  onMultiToggle: (e: React.MouseEvent) => void
+  onMultiToggle: (sampleId: number, e: React.MouseEvent) => void
+  onFindSimilar?: (sample: Sample) => void
   activeKeyFilter?: string | null
 }
 
@@ -28,11 +30,28 @@ export default memo(function SampleRow({
   sample,
   isSelected,
   isMultiSelected,
-  multiSelectedPaths,
+  getMultiSelectedPaths,
   onSelect,
   onMultiToggle,
+  onFindSimilar,
   activeKeyFilter
 }: SampleRowProps) {
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const ctxRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = (e: MouseEvent) => {
+      if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [ctxMenu])
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setCtxMenu({ x: e.clientX, y: e.clientY })
+  }, [])
   const hasWaveform = !!sample.has_waveform
   const { peaks } = useWaveform(
     hasWaveform ? sample.id : null,
@@ -40,15 +59,17 @@ export default memo(function SampleRow({
     hasWaveform
   )
 
-  const isMyFile = useAudioPlayerStore((s) => s.currentFilePath === sample.file_path)
-  const isPlaying = useAudioPlayerStore((s) => s.isPlaying && s.currentFilePath === sample.file_path)
-  const progress = useAudioPlayerStore((s) =>
-    s.currentFilePath === sample.file_path && s.duration > 0
-      ? s.currentTime / s.duration
-      : 0
+  const { isMyFile, isPlaying, progress, play, pause } = useAudioPlayerStore(
+    useShallow((s) => ({
+      isMyFile: s.currentFilePath === sample.file_path,
+      isPlaying: s.isPlaying && s.currentFilePath === sample.file_path,
+      progress: s.currentFilePath === sample.file_path && s.duration > 0
+        ? s.currentTime / s.duration
+        : 0,
+      play: s.play,
+      pause: s.pause,
+    }))
   )
-  const play = useAudioPlayerStore((s) => s.play)
-  const pause = useAudioPlayerStore((s) => s.pause)
   const toggleFavorite = useSampleStore((s) => s.toggleFavorite)
 
   const handlePlayToggle = useCallback(
@@ -63,13 +84,23 @@ export default memo(function SampleRow({
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      if (isMultiSelected && multiSelectedPaths && multiSelectedPaths.length > 1) {
-        window.api.drag.startNative(multiSelectedPaths)
-      } else {
-        window.api.drag.startNative(sample.file_path)
+      if (isMultiSelected) {
+        const paths = getMultiSelectedPaths()
+        if (paths.length > 1) {
+          window.api.drag.startNative(paths)
+          return
+        }
       }
+      window.api.drag.startNative(sample.file_path)
     },
-    [sample.file_path, isMultiSelected, multiSelectedPaths]
+    [sample.file_path, isMultiSelected, getMultiSelectedPaths]
+  )
+
+  const handleMultiToggle = useCallback(
+    (e: React.MouseEvent) => {
+      onMultiToggle(sample.id, e)
+    },
+    [sample.id, onMultiToggle]
   )
 
   const handleFavorite = useCallback(
@@ -80,13 +111,15 @@ export default memo(function SampleRow({
     [sample.id, toggleFavorite]
   )
 
-  const keyColor = sample.musical_key ? getCamelotColor(sample.musical_key) : null
-  const keyLabel = sample.musical_key ? getCamelotLabel(sample.musical_key) : null
+  const keyColor = useMemo(() => sample.musical_key ? getCamelotColor(sample.musical_key) : null, [sample.musical_key])
+  const keyLabel = useMemo(() => sample.musical_key ? getCamelotLabel(sample.musical_key) : null, [sample.musical_key])
 
-  const keyDimmed =
+  const keyDimmed = useMemo(() =>
     activeKeyFilter != null &&
     sample.musical_key != null &&
-    !isCompatibleKey(activeKeyFilter, sample.musical_key)
+    !isCompatibleKey(activeKeyFilter, sample.musical_key),
+    [activeKeyFilter, sample.musical_key]
+  )
 
   const isFav = !!sample.is_favorite
 
@@ -100,13 +133,14 @@ export default memo(function SampleRow({
           : 'bg-transparent hover:bg-surface border-l-transparent'
       } ${keyDimmed ? 'opacity-30' : ''}`}
       onClick={() => onSelect(sample)}
+      onContextMenu={handleContextMenu}
       draggable
       onDragStart={handleDragStart}
     >
       {/* Multi-select checkbox */}
       <div
         className="flex-shrink-0 w-4 flex items-center justify-center cursor-pointer"
-        onClick={onMultiToggle}
+        onClick={handleMultiToggle}
       >
         <div
           className={`w-3.5 h-3.5 border flex items-center justify-center transition-all ${
@@ -217,6 +251,45 @@ export default memo(function SampleRow({
       <span className="flex-shrink-0 text-text-secondary text-[12px] font-medium w-10 text-right">
         {formatDuration(sample.duration_ms)}
       </span>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <div
+          ref={ctxRef}
+          className="fixed z-50 bg-surface border border-border shadow-xl py-1 min-w-[160px]"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+        >
+          {onFindSimilar && (
+            <button
+              className="w-full text-left px-3 py-1.5 text-[11px] text-text hover:bg-elevated transition-colors flex items-center gap-2"
+              onClick={(e) => { e.stopPropagation(); setCtxMenu(null); onFindSimilar(sample) }}
+            >
+              <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              Find Similar
+            </button>
+          )}
+          <button
+            className="w-full text-left px-3 py-1.5 text-[11px] text-text hover:bg-elevated transition-colors flex items-center gap-2"
+            onClick={(e) => { e.stopPropagation(); setCtxMenu(null); window.api.shell.showInFolder(sample.file_path) }}
+          >
+            <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+            </svg>
+            Show in Folder
+          </button>
+          <button
+            className="w-full text-left px-3 py-1.5 text-[11px] text-text hover:bg-elevated transition-colors flex items-center gap-2"
+            onClick={(e) => { e.stopPropagation(); setCtxMenu(null); navigator.clipboard.writeText(sample.file_path) }}
+          >
+            <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+            </svg>
+            Copy Path
+          </button>
+        </div>
+      )}
     </div>
   )
 })

@@ -21,6 +21,7 @@
     "better-sqlite3": "^11.7.0",
     "chokidar": "^3.6.0",
     "cmdk": "^1.1.1",
+    "fast-xml-parser": "^5.4.2",
     "music-metadata": "^11.12.1",
     "piscina": "^5.1.4",
     "react-arborist": "^3.4.3",

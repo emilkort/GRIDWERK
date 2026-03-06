@@ -1,7 +1,15 @@
 import { useMemo } from 'react'
 import { useVstStore } from '@/stores/vst.store'
+import type { VstGroupBy } from '@/stores/vst.store'
 
 const categories = ['All', 'Instrument', 'Effect', 'Unknown'] as const
+
+const GROUP_OPTIONS: { value: VstGroupBy; label: string }[] = [
+  { value: 'none', label: 'No Grouping' },
+  { value: 'vendor', label: 'By Vendor' },
+  { value: 'category', label: 'By Category' },
+  { value: 'format', label: 'By Format' }
+]
 
 export default function VstFilterBar() {
   const filters = useVstStore((s) => s.filters)
@@ -12,6 +20,14 @@ export default function VstFilterBar() {
     const set = new Set<string>()
     for (const p of plugins) {
       if (p.subcategory) set.add(p.subcategory)
+    }
+    return ['All', ...Array.from(set).sort()]
+  }, [plugins])
+
+  const vendors = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of plugins) {
+      if (p.vendor) set.add(p.vendor)
     }
     return ['All', ...Array.from(set).sort()]
   }, [plugins])
@@ -73,6 +89,38 @@ export default function VstFilterBar() {
           ))}
         </select>
       )}
+
+      {/* Vendor dropdown */}
+      {vendors.length > 2 && (
+        <select
+          value={filters.vendor || 'All'}
+          onChange={(e) => setFilters({ vendor: e.target.value === 'All' ? '' : e.target.value })}
+          className="bg-base border border-border px-3 py-2 text-[10px] text-text-secondary focus:outline-none focus:border-border-hover transition-colors uppercase tracking-wider"
+        >
+          {vendors.map((v) => (
+            <option key={v} value={v}>
+              {v === 'All' ? 'All Vendors' : v}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Group by selector */}
+      <div className="flex items-center gap-1 bg-surface border border-border p-1">
+        {GROUP_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setFilters({ groupBy: opt.value })}
+            className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+              filters.groupBy === opt.value
+                ? 'bg-accent text-white'
+                : 'text-text-dark hover:text-text hover:bg-elevated'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
 
       {/* Favorites toggle */}
       <button

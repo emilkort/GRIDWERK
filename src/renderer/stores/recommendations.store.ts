@@ -1,46 +1,22 @@
 import { create } from 'zustand'
+import type { DiscoverData } from '../../main/services/recommendations.service'
 
-interface VstPlugin {
-  id: number
-  plugin_name: string
-  vendor: string | null
-  category: string | null
-  subcategory: string | null
-  format: string
-  file_path: string
-  is_favorite: number
-  icon_url: string | null
-  website: string | null
-}
-
-interface RecommendationsStore {
-  unexploredCategories: { category: string; count: number }[]
-  trySomethingNew: VstPlugin[]
-  similarToFavorites: VstPlugin[]
-  recentlyAdded: VstPlugin[]
+interface DiscoverStore {
+  data: DiscoverData | null
   loading: boolean
-  fetchRecommendations: () => Promise<void>
+  fetchData: () => Promise<void>
 }
 
-export const useRecommendationsStore = create<RecommendationsStore>((set) => ({
-  unexploredCategories: [],
-  trySomethingNew: [],
-  similarToFavorites: [],
-  recentlyAdded: [],
+export const useDiscoverStore = create<DiscoverStore>((set) => ({
+  data: null,
   loading: false,
-  fetchRecommendations: async () => {
+  fetchData: async () => {
     set({ loading: true })
     try {
-      const data = await window.api.recommendations.getVst()
-      set({
-        unexploredCategories: data.unexploredCategories,
-        trySomethingNew: data.trySomethingNew,
-        similarToFavorites: data.similarToFavorites,
-        recentlyAdded: data.recentlyAdded,
-        loading: false
-      })
+      const data = await window.api.discover.getData()
+      set({ data, loading: false })
     } catch (err) {
-      console.error('Failed to fetch recommendations:', err)
+      console.error('Failed to fetch discover data:', err)
       set({ loading: false })
     }
   }

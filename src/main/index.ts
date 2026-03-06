@@ -4,6 +4,7 @@ import { initDatabase, closeDatabase } from './services/database.service'
 import { destroyAnalysisWorker } from './services/audio-analysis.service'
 import { registerAllIpcHandlers } from './ipc'
 import { startWatchingAllDaws, stopAllWatchers } from './services/project-watcher.service'
+import { startWatchingAllVstPaths, stopAllVstWatchers } from './services/vst-watcher.service'
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -45,6 +46,10 @@ function createWindow(): BrowserWindow {
     console.error('Failed to load:', code, desc)
   })
 
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('Renderer process gone:', details.reason, details.exitCode)
+  })
+
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.show()
     mainWindow.focus()
@@ -59,6 +64,26 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
+// Intercept console.log/warn/error and forward to renderer for the in-app log viewer
+function setupLogForwarding(win: BrowserWindow): void {
+  const origLog = console.log
+  const origWarn = console.warn
+  const origError = console.error
+
+  function forward(level: string, args: any[]): void {
+    try {
+      if (win && !win.isDestroyed()) {
+        const message = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+        win.webContents.send('main:log', { level, message, timestamp: Date.now() })
+      }
+    } catch { /* swallow */ }
+  }
+
+  console.log = (...args: any[]) => { origLog.apply(console, args); forward('info', args) }
+  console.warn = (...args: any[]) => { origWarn.apply(console, args); forward('warn', args) }
+  console.error = (...args: any[]) => { origError.apply(console, args); forward('error', args) }
+}
+
 app.whenReady().then(() => {
   app.setAppUserModelId('com.gridwerk')
 
@@ -67,11 +92,17 @@ app.whenReady().then(() => {
 
   const mainWindow = createWindow()
 
+  // Forward main process logs to renderer
+  setupLogForwarding(mainWindow)
+
   // Register all IPC handlers
   registerAllIpcHandlers(mainWindow)
 
   // Start watching registered DAW project folders for live sync
   startWatchingAllDaws(mainWindow)
+
+  // Start watching VST scan paths for automatic plugin detection
+  startWatchingAllVstPaths(mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -80,6 +111,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopAllWatchers()
+  stopAllVstWatchers()
   destroyAnalysisWorker()
   closeDatabase()
   if (process.platform !== 'darwin') {

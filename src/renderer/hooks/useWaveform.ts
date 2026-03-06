@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { LruMap } from '@/utils/lru'
 
 interface UseWaveformReturn {
   peaks: number[]
   loading: boolean
 }
+
+// Module-level cache — survives unmount/remount from virtual scroll
+const peaksCache = new LruMap<number, number[]>(200)
 
 function parseCachedWaveform(data: any): number[] | null {
   if (!data) return null
@@ -48,13 +52,23 @@ export default function useWaveform(
       return
     }
 
+    // Check module-level cache first (instant, no IPC)
+    const cached = peaksCache.get(sampleId)
+    if (cached) {
+      setFetchedPeaks(cached)
+      return
+    }
+
     let cancelled = false
     setLoading(true)
 
     window.api.sample
       .getWaveform(sampleId)
       .then((result) => {
-        if (!cancelled && Array.isArray(result)) setFetchedPeaks(result)
+        if (!cancelled && Array.isArray(result)) {
+          peaksCache.set(sampleId, result)
+          setFetchedPeaks(result)
+        }
       })
       .catch(() => {
         if (!cancelled) setFetchedPeaks([])

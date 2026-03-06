@@ -212,6 +212,60 @@ function runIncrementalMigrations(db: Database.Database): void {
     console.log('Applied inline migration: 007_ai_features')
   }
 
+  // 008: plugin reference library
+  if (!applied.has('008_plugin_reference')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS plugin_reference (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        vendor TEXT,
+        category TEXT,
+        subcategory TEXT,
+        description TEXT,
+        image_url TEXT,
+        website TEXT,
+        formats TEXT,
+        tags TEXT,
+        source TEXT NOT NULL DEFAULT 'vst-guide-api',
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      )
+    `)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_plugin_ref_normalized ON plugin_reference(normalized_name)')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_plugin_ref_vendor ON plugin_reference(vendor)')
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_ref_name_vendor ON plugin_reference(normalized_name, COALESCE(vendor, \'\'))')
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('008_plugin_reference')
+    console.log('Applied inline migration: 008_plugin_reference')
+  }
+
+  // 009: vst_plugins is_hidden flag
+  if (!applied.has('009_vst_hidden')) {
+    try { db.exec('ALTER TABLE vst_plugins ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0') } catch { /* exists */ }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_vst_plugins_hidden ON vst_plugins(is_hidden)')
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('009_vst_hidden')
+    console.log('Applied inline migration: 009_vst_hidden')
+  }
+
+  // 010: project_plugins — tracks which VSTs are used in each DAW project (.als parsing)
+  if (!applied.has('010_project_plugins')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS project_plugins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        plugin_name TEXT NOT NULL,
+        format TEXT,
+        file_name TEXT,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        UNIQUE(project_id, plugin_name)
+      )
+    `)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_project_plugins_name ON project_plugins(plugin_name)')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_project_plugins_project ON project_plugins(project_id)')
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('010_project_plugins')
+    console.log('Applied inline migration: 010_project_plugins')
+  }
+
   // 003: indexed forward-slash path for fast subfolder filtering + composite indexes
   if (!applied.has('003_path_fwd_and_composite_indexes')) {
     try {
@@ -404,6 +458,7 @@ export async function backupDatabase(destPath?: string): Promise<string> {
 
 export function closeDatabase(): void {
   if (db) {
+    try { db.pragma('optimize') } catch { /* best-effort */ }
     db.close()
     db = null
   }

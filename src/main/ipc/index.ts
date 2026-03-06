@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow, nativeImage } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow, nativeImage } from 'electron'
 import * as dawService from '../services/daw.service'
 import * as vstService from '../services/vst.service'
 import * as sampleService from '../services/sample.service'
@@ -7,12 +7,15 @@ import * as projectService from '../services/project.service'
 import * as tagService from '../services/tag.service'
 import * as searchService from '../services/search.service'
 import * as enrichmentService from '../services/enrichment.service'
-import { backupDatabase, getDbPath } from '../services/database.service'
+import { backupDatabase, getDbPath, getDb } from '../services/database.service'
 import { startWatchingDaw, importUnlinkedDawProjects } from '../services/project-watcher.service'
+import { startWatchingVstPath, stopWatchingVstPath } from '../services/vst-watcher.service'
 import * as stageService from '../services/stage.service'
 import * as similarSampleService from '../services/similar-sample.service'
 import * as analyticsService from '../services/analytics.service'
 import * as recommendationsService from '../services/recommendations.service'
+import * as pluginReferenceService from '../services/plugin-reference.service'
+import * as autoTagService from '../services/auto-tag.service'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   // ---- DAW Hub ----
@@ -34,17 +37,35 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('daw:refresh-icon', (_, dawId) => dawService.refreshDawIcon(dawId))
 
   // ---- VST Manager ----
-  ipcMain.handle('vst:add-scan-path', (_, data) => vstService.addScanPath(data))
+  ipcMain.handle('vst:add-scan-path', (_, data) => {
+    const scanPath = vstService.addScanPath(data)
+    startWatchingVstPath(scanPath, mainWindow)
+    return scanPath
+  })
   ipcMain.handle('vst:list-scan-paths', () => vstService.listScanPaths())
-  ipcMain.handle('vst:scan', (_, scanPathId) => vstService.scanVstPath(scanPathId, mainWindow))
+  ipcMain.handle('vst:scan', async (_, scanPathId) => {
+    const plugins = vstService.scanVstPath(scanPathId, mainWindow)
+    // Auto-enrich newly scanned plugins in the background
+    enrichmentService.enrichNewPlugins(mainWindow).catch(() => {})
+    return plugins
+  })
   ipcMain.handle('vst:list', (_, filters) => vstService.listPlugins(filters))
   ipcMain.handle('vst:toggle-favorite', (_, pluginId) => vstService.toggleFavorite(pluginId))
   ipcMain.handle('vst:update-category', (_, pluginId, category) =>
     vstService.updateCategory(pluginId, category)
   )
-  ipcMain.handle('vst:delete-scan-path', (_, scanPathId) => vstService.deleteScanPath(scanPathId))
+  ipcMain.handle('vst:set-hidden', (_, pluginId, hidden) =>
+    vstService.setHidden(pluginId, hidden)
+  )
+  ipcMain.handle('vst:list-hidden', () => vstService.listHiddenPlugins())
+  ipcMain.handle('vst:delete-scan-path', (_, scanPathId) => {
+    stopWatchingVstPath(scanPathId)
+    return vstService.deleteScanPath(scanPathId)
+  })
   ipcMain.handle('vst:enrich-all', () => enrichmentService.enrichAllPlugins(mainWindow))
   ipcMain.handle('vst:enrich-single', (_, pluginId) => enrichmentService.enrichSinglePlugin(pluginId))
+  ipcMain.handle('vst:sync-reference-library', () => pluginReferenceService.syncReferenceLibrary(mainWindow))
+  ipcMain.handle('vst:reference-stats', () => pluginReferenceService.getReferenceStats())
 
   // ---- Sample Library ----
   ipcMain.handle('sample:add-folder', (_, data) => sampleService.addFolder(data))
@@ -110,8 +131,26 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   // ---- Analytics ----
   ipcMain.handle('analytics:get-data', () => analyticsService.getAnalyticsData())
 
-  // ---- Recommendations ----
-  ipcMain.handle('recommendations:get-vst', () => recommendationsService.getVstRecommendations())
+  // ---- Discover ----
+  ipcMain.handle('discover:get-data', () => recommendationsService.getDiscoverData())
+
+  // ---- Project Plugins ----
+  ipcMain.handle('project:get-plugins', (_, projectId: number) => {
+    return getDb().prepare('SELECT * FROM project_plugins WHERE project_id = ? ORDER BY plugin_name').all(projectId)
+  })
+
+  // ---- Auto-Tagging ----
+  ipcMain.handle('sample:auto-tag', () => autoTagService.autoTagUntaggedSamples())
+
+  // ---- BPM/Key Matching ----
+  ipcMain.handle('sample:find-matching', (_, bpm: number | null, key: string | null) =>
+    sampleService.findMatchingSamples(bpm, key)
+  )
+
+  // ---- Sample Delete ----
+  ipcMain.handle('sample:delete', (_, sampleId: number, deleteFromDisk: boolean) =>
+    sampleService.deleteSample(sampleId, deleteFromDisk)
+  )
 
   // ---- Search ----
   ipcMain.handle('search:query', (_, query) => searchService.search(query))
@@ -143,6 +182,11 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
       filters: filters || []
     })
     return result.canceled ? null : result.filePaths[0]
+  })
+
+  // ---- Shell ----
+  ipcMain.handle('shell:show-in-folder', (_, filePath: string) => {
+    shell.showItemInFolder(filePath)
   })
 
   // ---- Native Drag ----

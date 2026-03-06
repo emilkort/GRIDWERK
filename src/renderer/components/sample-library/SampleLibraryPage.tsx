@@ -58,6 +58,7 @@ export default function SampleLibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEnded])
 
+  const tagsById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags])
   const hasSamples = samples.length > 0 || loading
   const hasFolders = folders.length > 0
 
@@ -72,15 +73,21 @@ export default function SampleLibraryPage() {
 
   // Multi-select state
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<number>>(new Set())
-  const multiSelectedPaths = useMemo(
-    () => samples.filter((s) => multiSelectedIds.has(s.id)).map((s) => s.file_path),
-    [samples, multiSelectedIds]
-  )
   const lastMultiSelectIdxRef = useRef<number | null>(null)
 
-  const handleMultiToggle = useCallback((sample: { id: number }, e: React.MouseEvent) => {
+  // Stable ref-based getter — called only on dragstart, never during render
+  const multiSelectedIdsRef = useRef(multiSelectedIds)
+  multiSelectedIdsRef.current = multiSelectedIds
+  const samplesRef = useRef(samples)
+  samplesRef.current = samples
+  const getMultiSelectedPaths = useCallback(
+    () => samplesRef.current.filter((s) => multiSelectedIdsRef.current.has(s.id)).map((s) => s.file_path),
+    []
+  )
+
+  const handleMultiToggle = useCallback((sampleId: number, e: React.MouseEvent) => {
     e.stopPropagation()
-    const idx = samples.findIndex((s) => s.id === sample.id)
+    const idx = samples.findIndex((s) => s.id === sampleId)
 
     if (e.shiftKey && lastMultiSelectIdxRef.current !== null) {
       const start = Math.min(lastMultiSelectIdxRef.current, idx)
@@ -93,8 +100,8 @@ export default function SampleLibraryPage() {
     } else {
       setMultiSelectedIds((prev) => {
         const next = new Set(prev)
-        if (next.has(sample.id)) next.delete(sample.id)
-        else next.add(sample.id)
+        if (next.has(sampleId)) next.delete(sampleId)
+        else next.add(sampleId)
         return next
       })
       lastMultiSelectIdxRef.current = idx
@@ -159,7 +166,14 @@ export default function SampleLibraryPage() {
     }
   }, [lastVirtualItem?.index, samples.length, hasMore, loading, fetchMoreSamples])
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+  // ── Keyboard shortcuts (ref-based to avoid re-registration on scroll/playback) ──
+  const selectedSampleRef = useRef(selectedSample)
+  selectedSampleRef.current = selectedSample
+  const selectedIndexRef = useRef(-1)
+  selectedIndexRef.current = selectedSample ? samples.findIndex((s) => s.id === selectedSample.id) : -1
+  const isPlayingRef = useRef(isPlaying)
+  isPlayingRef.current = isPlaying
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Don't fire when typing in an input or textarea
@@ -167,23 +181,22 @@ export default function SampleLibraryPage() {
 
       if (e.key === ' ') {
         e.preventDefault()
-        if (selectedSample) {
-          if (isPlaying) pause()
-          else play(selectedSample.file_path)
+        if (selectedSampleRef.current) {
+          if (isPlayingRef.current) pause()
+          else play(selectedSampleRef.current.file_path)
         }
         return
       }
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
-        const idx = samples.findIndex((s) => s.id === selectedSample?.id)
-        const nextIdx = e.key === 'ArrowDown' ? idx + 1 : idx - 1
-        if (nextIdx >= 0 && nextIdx < samples.length) {
-          const next = samples[nextIdx]
+        const curIdx = selectedIndexRef.current
+        const nextIdx = e.key === 'ArrowDown' ? curIdx + 1 : curIdx - 1
+        if (nextIdx >= 0 && nextIdx < samplesRef.current.length) {
+          const next = samplesRef.current[nextIdx]
           selectSample(next)
           virtualizer.scrollToIndex(nextIdx, { align: 'auto' })
-          // If something was already playing, keep playing with the new selection
-          if (isPlaying) play(next.file_path)
+          if (isPlayingRef.current) play(next.file_path)
         }
         return
       }
@@ -211,7 +224,7 @@ export default function SampleLibraryPage() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedSample, samples, isPlaying, play, pause, selectSample, virtualizer])
+  }, [play, pause, selectSample, virtualizer])
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value
@@ -282,15 +295,34 @@ export default function SampleLibraryPage() {
             {folders.length > 0 && ` across ${folders.length} folder${folders.length !== 1 ? 's' : ''}`}
           </p>
         </div>
-        <button
-          onClick={() => setShowDuplicates(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-elevated border border-border text-text-muted hover:text-text text-[10px] font-bold uppercase tracking-widest transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.5a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-          </svg>
-          Find Duplicates
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              try {
+                const result = await window.api.sample.autoTag()
+                console.log(`Auto-tagged ${result.tagged} samples`)
+                fetchSamples()
+                fetchTags()
+              } catch (err) { console.error('Auto-tag failed:', err) }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-elevated border border-border text-text-muted hover:text-text text-[10px] font-bold uppercase tracking-widest transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
+            </svg>
+            Auto-Tag
+          </button>
+          <button
+            onClick={() => setShowDuplicates(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-elevated border border-border text-text-muted hover:text-text text-[10px] font-bold uppercase tracking-widest transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.5a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+            </svg>
+            Find Duplicates
+          </button>
+        </div>
       </div>
 
       {showDuplicates && <DuplicateResultsDialog onClose={() => setShowDuplicates(false)} />}
@@ -524,7 +556,7 @@ export default function SampleLibraryPage() {
                 <FilterChip label={filters.analyzedFilter === 'analyzed' ? 'Analyzed' : 'Unanalyzed'} onRemove={() => setFilters({ analyzedFilter: 'all' })} />
               )}
               {filters.tagIds.map((tagId) => {
-                const tag = tags.find((t) => t.id === tagId)
+                const tag = tagsById.get(tagId)
                 return tag ? (
                   <FilterChip key={tagId} label={`Tag: ${tag.name}`} onRemove={() => handleToggleTag(tagId)} />
                 ) : null
@@ -580,9 +612,9 @@ export default function SampleLibraryPage() {
                         sample={sample}
                         isSelected={selectedSample?.id === sample.id}
                         isMultiSelected={multiSelectedIds.has(sample.id)}
-                        multiSelectedPaths={multiSelectedPaths}
+                        getMultiSelectedPaths={getMultiSelectedPaths}
                         onSelect={selectSample}
-                        onMultiToggle={(e) => handleMultiToggle(sample, e)}
+                        onMultiToggle={handleMultiToggle}
                         activeKeyFilter={filters.keyFilter}
                       />
                     </div>

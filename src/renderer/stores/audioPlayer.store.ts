@@ -14,63 +14,23 @@ interface AudioPlayerStore {
   seek: (ratio: number) => void
 }
 
-// ── Web Audio API engine with AudioBuffer LRU cache ─────────────────────────
+// ── HTML5 Audio engine with preload cache ────────────────────────────────────
 
-let ctx: AudioContext | null = null
-let sourceNode: AudioBufferSourceNode | null = null
-let currentBuffer: AudioBuffer | null = null
+let audio: HTMLAudioElement | null = null
 let rafHandle: number | null = null
-let lastUpdate = 0
+let lastTimeUpdate = 0
 
-// Playback position tracking (AudioBufferSourceNode is one-shot)
-let startedAt = 0      // context.currentTime when playback started
-let pauseOffset = 0    // seconds into the buffer where we paused
-let playing = false     // internal flag (avoids store reads in hot path)
-let stoppedByUser = false // distinguishes stop() from natural end
-
-// LRU AudioBuffer cache — decode once, play instantly forever
-const bufferCache = new Map<string, AudioBuffer>()
-const MAX_CACHE = 50
-
-function getCtx(): AudioContext {
-  if (!ctx) ctx = new AudioContext()
-  if (ctx.state === 'suspended') ctx.resume()
-  return ctx
-}
+// Preloaded audio elements — adjacent samples ready for instant playback
+const preloadCache = new Map<string, HTMLAudioElement>()
+const MAX_PRELOAD = 8
 
 function filePathToUrl(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/')
   const encoded = normalized
     .split('/')
-    .map((seg) => seg === '' || /^[a-zA-Z]:$/.test(seg) ? seg : encodeURIComponent(seg))
+    .map((seg) => (seg === '' || /^[a-zA-Z]:$/.test(seg) ? seg : encodeURIComponent(seg)))
     .join('/')
   return /^[a-zA-Z]:/.test(normalized) ? `file:///${encoded}` : `file://${encoded}`
-}
-
-/** Fetch, decode, and cache an AudioBuffer. Returns cached if available. */
-async function fetchAndDecode(filePath: string): Promise<AudioBuffer> {
-  const cached = bufferCache.get(filePath)
-  if (cached) {
-    // Move to end (LRU touch)
-    bufferCache.delete(filePath)
-    bufferCache.set(filePath, cached)
-    return cached
-  }
-
-  const ac = getCtx()
-  const url = filePathToUrl(filePath)
-  const response = await fetch(url)
-  const arrayBuffer = await response.arrayBuffer()
-  const audioBuffer = await ac.decodeAudioData(arrayBuffer)
-
-  // Cache with LRU eviction
-  bufferCache.set(filePath, audioBuffer)
-  if (bufferCache.size > MAX_CACHE) {
-    const firstKey = bufferCache.keys().next().value!
-    bufferCache.delete(firstKey)
-  }
-
-  return audioBuffer
 }
 
 function stopTracking(): void {
@@ -80,68 +40,44 @@ function stopTracking(): void {
   }
 }
 
-function stopSource(): void {
-  if (sourceNode) {
-    try {
-      sourceNode.onended = null
-      sourceNode.stop()
-    } catch { /* already stopped */ }
-    sourceNode.disconnect()
-    sourceNode = null
+/** Preload a file for instant playback later */
+function preloadFile(filePath: string): void {
+  if (preloadCache.has(filePath)) return
+  const el = new Audio()
+  el.preload = 'auto'
+  el.src = filePathToUrl(filePath)
+  el.load()
+  preloadCache.set(filePath, el)
+
+  if (preloadCache.size > MAX_PRELOAD) {
+    const firstKey = preloadCache.keys().next().value!
+    const old = preloadCache.get(firstKey)
+    if (old) { old.pause(); old.src = '' }
+    preloadCache.delete(firstKey)
   }
 }
 
-/** Create and start a new AudioBufferSourceNode at the given offset */
-function startSourceAt(buffer: AudioBuffer, offset: number, store: typeof useAudioPlayerStore): void {
-  const ac = getCtx()
-  stopSource()
-
-  const source = ac.createBufferSource()
-  source.buffer = buffer
-  source.connect(ac.destination)
-
-  source.onended = () => {
-    // Only fire isEnded if playback reached the natural end (not user stop/seek)
-    if (!stoppedByUser && playing) {
-      playing = false
-      stopTracking()
-      store.setState({ isPlaying: false, currentTime: 0, isEnded: true })
-    }
-  }
-
-  source.start(0, offset)
-  sourceNode = source
-  currentBuffer = buffer
-  startedAt = ac.currentTime - offset
-  pauseOffset = 0
-  playing = true
-  stoppedByUser = false
-}
-
-/** Prefetch adjacent samples for instant arrow-key navigation */
+/** Prefetch adjacent samples */
 function prefetchNeighbors(filePath: string): void {
   try {
     const samples = useSampleStore.getState().samples
     const idx = samples.findIndex((s) => s.file_path === filePath)
     if (idx < 0) return
-
-    for (const neighbor of [samples[idx + 1], samples[idx - 1], samples[idx + 2], samples[idx - 2]]) {
-      if (neighbor) {
-        fetchAndDecode(neighbor.file_path).catch(() => { /* ignore preload errors */ })
-      }
+    for (const n of [samples[idx + 1], samples[idx - 1], samples[idx + 2], samples[idx - 2]]) {
+      if (n) preloadFile(n.file_path)
     }
   } catch { /* ignore */ }
 }
 
-export const useAudioPlayerStore = create<AudioPlayerStore>((set) => {
+export const useAudioPlayerStore = create<AudioPlayerStore>((set, get) => {
+  // Position tracking — only updates store at ~15fps to minimize re-renders
+  // but feels smooth because WaveformPreview interpolates via CSS/canvas
   function trackPosition(): void {
-    if (!playing || !ctx) return
+    if (!audio || audio.paused) return
     const now = performance.now()
-    if (now - lastUpdate >= 50) {
-      const elapsed = ctx.currentTime - startedAt
-      const dur = currentBuffer?.duration ?? 0
-      set({ currentTime: Math.min(elapsed, dur) })
-      lastUpdate = now
+    if (now - lastTimeUpdate >= 66) { // ~15fps — enough for smooth progress bars
+      set({ currentTime: audio.currentTime })
+      lastTimeUpdate = now
     }
     rafHandle = requestAnimationFrame(trackPosition)
   }
@@ -154,92 +90,106 @@ export const useAudioPlayerStore = create<AudioPlayerStore>((set) => {
     currentFilePath: null,
 
     play: async (filePath: string) => {
-      try {
-        const state = useAudioPlayerStore.getState()
+      const state = get()
 
-        // Already playing this file
-        if (state.currentFilePath === filePath && state.isPlaying) {
-          return
-        }
+      // Already playing this file
+      if (state.currentFilePath === filePath && state.isPlaying) return
 
-        // Resume from pause (same file, same buffer)
-        if (state.currentFilePath === filePath && !state.isPlaying && currentBuffer) {
-          startSourceAt(currentBuffer, pauseOffset, useAudioPlayerStore)
-          set({ isPlaying: true, isEnded: false })
-          lastUpdate = 0
-          rafHandle = requestAnimationFrame(trackPosition)
-          return
-        }
-
-        // New file — stop current playback
-        stoppedByUser = true
-        playing = false
-        stopSource()
-        stopTracking()
-
-        // Decode (instant if cached)
-        const buffer = await fetchAndDecode(filePath)
-
-        set({
-          currentFilePath: filePath,
-          currentTime: 0,
-          duration: buffer.duration,
-          isEnded: false,
-          isPlaying: true
-        })
-
-        startSourceAt(buffer, 0, useAudioPlayerStore)
-        lastUpdate = 0
+      // Resume from pause (same file)
+      if (state.currentFilePath === filePath && !state.isPlaying && audio) {
+        audio.play().catch(() => {})
+        set({ isPlaying: true, isEnded: false })
+        lastTimeUpdate = 0
         rafHandle = requestAnimationFrame(trackPosition)
+        return
+      }
 
-        // Prefetch neighbors for fast arrow-key navigation
-        prefetchNeighbors(filePath)
-      } catch (err) {
+      // New file — stop current immediately
+      if (audio) {
+        audio.pause()
+        audio.onended = null
+        audio.onerror = null
+      }
+      stopTracking()
+
+      // Set state immediately (no await) for instant UI response
+      set({
+        currentFilePath: filePath,
+        currentTime: 0,
+        duration: 0,
+        isEnded: false,
+        isPlaying: true
+      })
+
+      // Use preloaded element if available
+      const preloaded = preloadCache.get(filePath)
+      if (preloaded) {
+        preloadCache.delete(filePath)
+        audio = preloaded
+        audio.currentTime = 0
+      } else {
+        audio = new Audio()
+        audio.preload = 'auto'
+        audio.src = filePathToUrl(filePath)
+      }
+
+      const el = audio
+
+      // Wire minimal events (no onplay — we already set isPlaying above)
+      el.onended = () => {
+        stopTracking()
+        set({ isPlaying: false, currentTime: 0, isEnded: true })
+      }
+      el.onerror = () => {
+        console.error('[AudioPlayer] playback error:', el.error?.message)
+        stopTracking()
+        set({ isPlaying: false })
+      }
+
+      // Set duration as soon as known
+      if (Number.isFinite(el.duration) && el.duration > 0) {
+        set({ duration: el.duration })
+      } else {
+        el.ondurationchange = () => {
+          if (Number.isFinite(el.duration)) {
+            set({ duration: el.duration })
+            el.ondurationchange = null
+          }
+        }
+      }
+
+      // Start playback (fire-and-forget for responsiveness)
+      el.play().catch((err) => {
         console.error('[AudioPlayer] play() failed:', err)
         set({ isPlaying: false })
-        stopTracking()
-      }
+      })
+
+      // Start position tracking
+      lastTimeUpdate = 0
+      rafHandle = requestAnimationFrame(trackPosition)
+
+      // Prefetch neighbors in background
+      prefetchNeighbors(filePath)
     },
 
     pause: () => {
-      if (!playing || !ctx) return
-      stoppedByUser = true
-      pauseOffset = ctx.currentTime - startedAt
-      playing = false
-      stopSource()
+      if (!audio) return
+      audio.pause()
       stopTracking()
-      set({ isPlaying: false, currentTime: pauseOffset })
+      set({ isPlaying: false, currentTime: audio.currentTime })
     },
 
     stop: () => {
-      stoppedByUser = true
-      playing = false
-      pauseOffset = 0
-      stopSource()
+      if (audio) { audio.pause(); audio.currentTime = 0 }
       stopTracking()
       set({ isPlaying: false, currentTime: 0 })
     },
 
     seek: (ratio: number) => {
-      if (!currentBuffer) return
-      const dur = currentBuffer.duration
-      const offset = Math.max(0, Math.min(1, ratio)) * dur
-      const wasPlaying = playing
-
-      stoppedByUser = true
-      playing = false
-      stopSource()
-      stopTracking()
-
-      if (wasPlaying) {
-        startSourceAt(currentBuffer, offset, useAudioPlayerStore)
-        set({ currentTime: offset, isPlaying: true })
-        lastUpdate = 0
-        rafHandle = requestAnimationFrame(trackPosition)
-      } else {
-        pauseOffset = offset
-        set({ currentTime: offset })
-      }
+      if (!audio || !Number.isFinite(audio.duration)) return
+      const target = Math.max(0, Math.min(1, ratio)) * audio.duration
+      audio.currentTime = target
+      set({ currentTime: target })
     }
   }
 })

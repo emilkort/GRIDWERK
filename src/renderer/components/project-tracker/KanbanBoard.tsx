@@ -170,7 +170,7 @@ export default function KanbanBoard({ collapseEmpty = false, filteredProjects, o
         const insertIdx = overIsColumn
           ? tgtItems.length
           : Math.max(0, tgtItems.findIndex((p) => String(p.id) === overId))
-        const movedGroup = groupItems.map((p) => ({ ...p, stage: overStage as Project['stage'] }))
+        const movedGroup = groupItems.map((p) => ({ ...p, stage: overStage  }))
         const updatedTgt = [...tgtItems]
         updatedTgt.splice(insertIdx, 0, ...movedGroup)
         setLocalProjects([
@@ -187,7 +187,7 @@ export default function KanbanBoard({ collapseEmpty = false, filteredProjects, o
           ? tgtItems.length
           : Math.max(0, tgtItems.findIndex((p) => String(p.id) === overId))
         const updated = [...tgtItems]
-        updated.splice(insertIdx, 0, { ...activeProj, stage: overStage as Project['stage'] })
+        updated.splice(insertIdx, 0, { ...activeProj, stage: overStage  })
         setLocalProjects([
           ...current.filter((p) => p.stage !== activeStage && p.stage !== overStage),
           ...srcItems,
