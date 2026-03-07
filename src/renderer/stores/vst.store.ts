@@ -69,7 +69,9 @@ interface VstStore {
 
 export const useVstStore = create<VstStore>((set, get) => {
   // Auto-refresh plugin list when the watcher detects changes on disk
-  if (typeof window !== 'undefined' && window.api?.on?.vstPluginChanged) {
+  // Guard against duplicate registration during HMR reloads
+  if (typeof window !== 'undefined' && window.api?.on?.vstPluginChanged && !(window as any).__vstListenersRegistered) {
+    (window as any).__vstListenersRegistered = true
     window.api.on.vstPluginChanged(() => {
       get().fetchPlugins()
     })

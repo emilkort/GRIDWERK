@@ -262,6 +262,28 @@ export default function ProjectDetailPanel({ project, onClose }: Props) {
             </div>
           </div>
 
+          {/* Track count + Time signature row (read-only, from .als parsing) */}
+          {(project.track_count || project.time_signature) && (
+            <div className="flex gap-3">
+              {project.track_count != null && (
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-muted mb-1.5">Tracks</label>
+                  <div className="w-full bg-surface border border-border rounded px-3 py-1.5 text-text text-[13px]">
+                    {project.track_count}
+                  </div>
+                </div>
+              )}
+              {project.time_signature && (
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-muted mb-1.5">Time Sig</label>
+                  <div className="w-full bg-surface border border-border rounded px-3 py-1.5 text-text text-[13px]">
+                    {project.time_signature}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Color */}
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-text-muted mb-1.5">Color</label>

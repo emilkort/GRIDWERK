@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type Page = 'daw-hub' | 'vst-manager' | 'sample-library' | 'project-tracker' | 'analytics' | 'recommendations'
+export type Page = 'daw-hub' | 'vst-manager' | 'sample-library' | 'project-tracker' | 'organiser' | 'analytics' | 'recommendations' | 'settings'
 export type Theme = 'dark' | 'light'
 
 interface UiStore {

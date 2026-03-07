@@ -200,6 +200,8 @@ export function listSamples(filters?: {
   sortDir?: 'asc' | 'desc'
   isFavorites?: boolean
   analyzedFilter?: 'all' | 'analyzed' | 'unanalyzed'
+  source?: 'all' | 'local' | 'splice' | 'tracklib'
+  showCloud?: boolean
   limit?: number
   offset?: number
   skipCount?: boolean
@@ -214,6 +216,7 @@ export function listSamples(filters?: {
     CASE WHEN s.waveform_data IS NOT NULL THEN 1 ELSE 0 END AS has_waveform,
     s.is_favorite,
     s.spectral_centroid, s.spectral_flatness, s.zero_crossing_rate, s.attack_time_ms, s.onset_count,
+    s.source, s.is_cloud, s.pack_name, s.cloud_preview_url, s.source_tags,
     s.last_modified, s.created_at, s.updated_at
     FROM samples s`
   const params: any[] = []
@@ -275,6 +278,13 @@ export function listSamples(filters?: {
     sql += ' AND s.waveform_data IS NOT NULL'
   } else if (filters?.analyzedFilter === 'unanalyzed') {
     sql += ' AND s.waveform_data IS NULL'
+  }
+  if (filters?.source && filters.source !== 'all') {
+    sql += ' AND s.source = ?'
+    params.push(filters.source)
+  }
+  if (filters?.showCloud === false) {
+    sql += ' AND s.is_cloud = 0'
   }
 
   // Count total matching rows (for pagination) — skip when caller already knows the total

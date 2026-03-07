@@ -1,5 +1,4 @@
 import { getDb } from './database.service'
-import { generateGroupKey } from './project.service'
 
 export interface DiscoverData {
   profile: {
@@ -48,6 +47,13 @@ export interface DiscoverData {
   activity: {
     recentProjects: { id: number; title: string; stage: string; createdAt: number }[]
     recentVsts: { id: number; pluginName: string; vendor: string | null; iconUrl: string | null; createdAt: number }[]
+  }
+  projectInsights: {
+    avgBpm: number | null
+    topKey: string | null
+    avgTrackCount: number | null
+    topPlugins: { name: string; count: number }[]
+    bpmRange: { min: number; max: number } | null
   }
 }
 
@@ -102,19 +108,15 @@ export function getDiscoverData(): DiscoverData {
     if (dayRow) mostProductiveDay = DAY_NAMES[dayRow.dow]
   } catch { /* ignore */ }
 
-  // Completion rate
+  // Completion rate (bounded query — uses SQL aggregation instead of loading all rows)
   let completionRate = 0
   try {
-    const allProjects = db.prepare('SELECT title, stage FROM projects').all() as { title: string; stage: string }[]
-    const songStages = new Map<string, Set<string>>()
-    for (const p of allProjects) {
-      const key = generateGroupKey(p.title)
-      if (!songStages.has(key)) songStages.set(key, new Set())
-      songStages.get(key)!.add(p.stage)
-    }
-    const total = songStages.size
-    const done = [...songStages.values()].filter(stages => stages.has('done')).length
-    completionRate = total > 0 ? Math.round((done / total) * 100) : 0
+    const crRow = db.prepare(
+      `SELECT COUNT(*) as total,
+              SUM(CASE WHEN stage = 'done' THEN 1 ELSE 0 END) as done
+       FROM projects`
+    ).get() as { total: number; done: number }
+    completionRate = crRow.total > 0 ? Math.round((crRow.done / crRow.total) * 100) : 0
   } catch { /* ignore */ }
 
   // ── Toolkit Health ───────────────────────────────────────
@@ -267,9 +269,10 @@ export function getDiscoverData(): DiscoverData {
     `SELECT CAST(strftime('%w', created_at, 'unixepoch') AS INTEGER) as dow, COUNT(*) as count
      FROM projects GROUP BY dow ORDER BY dow`
   ).all() as { dow: number; count: number }[]
+  const weekdayMap = new Map(weekdayRaw.map(r => [r.dow, r.count]))
   const weekdayDistribution = dayNames.map((day, i) => ({
     day,
-    count: weekdayRaw.find(r => r.dow === i)?.count ?? 0
+    count: weekdayMap.get(i) ?? 0
   }))
 
   // Productive streak (consecutive weeks with at least 1 project)
@@ -306,6 +309,34 @@ export function getDiscoverData(): DiscoverData {
     ? Math.floor((Date.now() / 1000 - lastProjectRow.created_at) / 86400)
     : null
 
+  // ── Project Insights (from .als parsing) ────────────────
+  const projAvgBpmRow = db.prepare(
+    'SELECT AVG(bpm) as avg FROM projects WHERE bpm IS NOT NULL'
+  ).get() as { avg: number | null }
+  const projAvgBpm = projAvgBpmRow?.avg ? Math.round(projAvgBpmRow.avg * 10) / 10 : null
+
+  const projTopKeyRow = db.prepare(
+    'SELECT musical_key as key, COUNT(*) as count FROM projects WHERE musical_key IS NOT NULL GROUP BY musical_key ORDER BY count DESC LIMIT 1'
+  ).get() as { key: string; count: number } | undefined
+  const projTopKey = projTopKeyRow?.key ?? null
+
+  const projAvgTrackRow = db.prepare(
+    'SELECT AVG(track_count) as avg FROM projects WHERE track_count IS NOT NULL AND track_count > 0'
+  ).get() as { avg: number | null }
+  const projAvgTrackCount = projAvgTrackRow?.avg ? Math.round(projAvgTrackRow.avg * 10) / 10 : null
+
+  const projTopPlugins = db.prepare(
+    `SELECT plugin_name as name, COUNT(DISTINCT project_id) as count
+     FROM project_plugins GROUP BY plugin_name ORDER BY count DESC LIMIT 10`
+  ).all() as { name: string; count: number }[]
+
+  const projBpmRangeRow = db.prepare(
+    'SELECT MIN(bpm) as min, MAX(bpm) as max FROM projects WHERE bpm IS NOT NULL'
+  ).get() as { min: number | null; max: number | null }
+  const projBpmRange = projBpmRangeRow?.min != null && projBpmRangeRow?.max != null
+    ? { min: Math.round(projBpmRangeRow.min), max: Math.round(projBpmRangeRow.max) }
+    : null
+
   return {
     profile: {
       totalSamples, totalVsts, totalProjects,
@@ -334,6 +365,13 @@ export function getDiscoverData(): DiscoverData {
     },
     activity: {
       recentProjects, recentVsts
+    },
+    projectInsights: {
+      avgBpm: projAvgBpm,
+      topKey: projTopKey,
+      avgTrackCount: projAvgTrackCount,
+      topPlugins: projTopPlugins,
+      bpmRange: projBpmRange
     }
   }
 }

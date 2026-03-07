@@ -3,6 +3,12 @@ import { useDiscoverStore } from '@/stores/recommendations.store'
 import { useUiStore } from '@/stores/ui.store'
 import { useVstStore } from '@/stores/vst.store'
 import DuplicateResultsDialog from '@/components/sample-library/DuplicateResultsDialog'
+import { StatPill } from './StatPill'
+import { SoundPill } from './SoundPill'
+import { ToolkitCard } from './ToolkitCard'
+import { ColorBar } from './ColorBar'
+import { SectionHeader } from './SectionHeader'
+import { formatTimeAgo } from './formatTimeAgo'
 
 const GRADIENT_COLORS = [
   { from: '#FF2D2D', to: '#ff6b6b' },
@@ -17,115 +23,6 @@ const KEY_COLORS = [
   '#FF2D2D', '#f97316', '#fbbf24', '#22c55e', '#3b82f6', '#8b5cf6',
   '#ec4899', '#ef4444', '#f59e0b', '#10b981', '#6366f1', '#d946ef',
 ]
-
-function StatPill({ label, value, color }: { label: string; value: string | number; color?: string }) {
-  return (
-    <div className="relative flex flex-col items-center justify-center px-5 py-3.5 bg-surface border border-border min-w-[110px] overflow-hidden group hover:border-border-hover transition-colors">
-      {color && (
-        <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: color }} />
-      )}
-      <span className="text-xl font-bold text-text tabular-nums">{value}</span>
-      <span className="text-[9px] text-text-dark uppercase tracking-widest mt-1">{label}</span>
-    </div>
-  )
-}
-
-function SoundPill({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="flex items-center gap-2.5 px-3.5 py-2 bg-elevated border border-border">
-      {color && <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />}
-      <span className="text-[9px] text-text-dark uppercase tracking-widest">{label}</span>
-      <span className="text-[11px] font-bold text-text">{value}</span>
-    </div>
-  )
-}
-
-function ToolkitCard({
-  icon,
-  count,
-  label,
-  color,
-  action
-}: {
-  icon: React.ReactNode
-  count: number
-  label: string
-  color: string
-  action?: { label: string; onClick: () => void }
-}) {
-  if (count === 0) return null
-  return (
-    <div className="relative flex items-center gap-3 px-4 py-3 bg-surface border border-border overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: color }} />
-      <div style={{ color }}>{icon}</div>
-      <div className="flex-1 min-w-0">
-        <span className="text-sm font-bold text-text">{count.toLocaleString()}</span>
-        <span className="text-[10px] text-text-dark ml-1.5">{label}</span>
-      </div>
-      {action && (
-        <button
-          onClick={action.onClick}
-          className="px-3 py-1 text-[9px] font-bold uppercase tracking-widest border transition-colors shrink-0"
-          style={{ color, borderColor: `${color}40`, background: `${color}10` }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = `${color}20` }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = `${color}10` }}
-        >
-          {action.label}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function ColorBar({
-  label,
-  count,
-  maxCount,
-  color
-}: {
-  label: string
-  count: number
-  maxCount: number
-  color: { from: string; to: string }
-}) {
-  const pct = maxCount > 0 ? (count / maxCount) * 100 : 0
-  return (
-    <div className="flex items-center gap-2.5">
-      <span className="text-[9px] text-text-muted uppercase tracking-wider w-16 text-right shrink-0">{label}</span>
-      <div className="flex-1 h-5 bg-elevated/50 overflow-hidden relative">
-        <div
-          className="h-full transition-all duration-700 ease-out"
-          style={{
-            width: `${pct}%`,
-            background: `linear-gradient(90deg, ${color.from}, ${color.to})`,
-            boxShadow: `0 0 12px ${color.from}30`
-          }}
-        />
-      </div>
-      <span className="text-[10px] font-bold text-text tabular-nums w-12 shrink-0 text-right">{count.toLocaleString()}</span>
-    </div>
-  )
-}
-
-function SectionHeader({ title, subtitle, icon }: { title: string; subtitle?: string; icon?: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 mb-5">
-      {icon && <div className="text-accent">{icon}</div>}
-      <div>
-        <h2 className="text-[12px] font-bold text-text uppercase tracking-[0.15em]">{title}</h2>
-        {subtitle && <p className="text-[10px] text-text-dark mt-0.5">{subtitle}</p>}
-      </div>
-    </div>
-  )
-}
-
-function formatTimeAgo(unixSeconds: number): string {
-  const diff = Math.floor(Date.now() / 1000) - unixSeconds
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`
-  return `${Math.floor(diff / 2592000)}mo ago`
-}
 
 export default function RecommendationsPage() {
   const { data, loading, fetchData } = useDiscoverStore()

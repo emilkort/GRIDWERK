@@ -6,8 +6,10 @@ import DawHubPage from '@/components/daw-hub/DawHubPage'
 import VstManagerPage from '@/components/vst-manager/VstManagerPage'
 import SampleLibraryPage from '@/components/sample-library/SampleLibraryPage'
 import ProjectTrackerPage from '@/components/project-tracker/ProjectTrackerPage'
+import OrganiserPage from '@/components/organiser/OrganiserPage'
 import AnalyticsPage from '@/components/analytics/AnalyticsPage'
 import RecommendationsPage from '@/components/recommendations/RecommendationsPage'
+import SettingsPage from '@/components/settings/SettingsPage'
 import { useUiStore } from '@/stores/ui.store'
 
 function App(): JSX.Element {
@@ -24,10 +26,14 @@ function App(): JSX.Element {
         return <SampleLibraryPage />
       case 'project-tracker':
         return <ProjectTrackerPage />
+      case 'organiser':
+        return <OrganiserPage />
       case 'analytics':
         return <AnalyticsPage />
       case 'recommendations':
         return <RecommendationsPage />
+      case 'settings':
+        return <SettingsPage />
       default:
         return <DawHubPage />
     }

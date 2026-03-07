@@ -79,6 +79,22 @@
   }
 }
 
+/* Shared button styles */
+@layer components {
+  .btn-primary {
+    @apply px-5 py-2 bg-accent hover:bg-red-600 text-white font-bold text-[11px] uppercase tracking-widest transition-colors disabled:opacity-40;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 bg-transparent border border-border text-text font-bold text-[11px] uppercase tracking-widest hover:bg-white/5 transition-colors disabled:opacity-40;
+  }
+  .btn-danger {
+    @apply px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 font-bold text-[11px] uppercase tracking-widest hover:bg-red-500/20 transition-colors disabled:opacity-40;
+  }
+  .btn-ghost {
+    @apply px-3 py-1.5 text-text-secondary font-bold text-[11px] uppercase tracking-widest hover:bg-white/5 hover:text-text transition-colors disabled:opacity-40;
+  }
+}
+
 /* Drag region for custom title bar */
 .drag-region {
   -webkit-app-region: drag;

@@ -52,7 +52,7 @@ export function createProject(data: {
 
 export function updateProject(id: number, changes: Record<string, any>): Project {
   const db = getDb()
-  const allowed = ['title', 'description', 'bpm', 'musical_key', 'color', 'priority', 'daw_project_id']
+  const allowed = ['title', 'description', 'bpm', 'musical_key', 'color', 'priority', 'daw_project_id', 'track_count', 'time_signature']
   const sets: string[] = []
   const params: any[] = []
 

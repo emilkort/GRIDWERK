@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useProjectStore, type Project } from '@/stores/project.store'
 import { useStageStore } from '@/stores/stage.store'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
+import ContextMenu from '@/components/shared/ContextMenu'
 
 interface ProjectCardProps {
   project: Project
@@ -58,14 +58,6 @@ export default function ProjectCard({
     transition,
     willChange: transform ? 'transform' : undefined
   }
-
-  // Close context menu on outside click
-  useEffect(() => {
-    if (!ctxMenu) return
-    const close = () => setCtxMenu(null)
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [ctxMenu])
 
   const hasTodos  = project.todo_count > 0
   const allDone   = hasTodos && project.done_count === project.todo_count
@@ -219,6 +211,9 @@ export default function ProjectCard({
               {project.musical_key && (
                 <span className="text-[10px] text-[#3a3a3a] font-bold">{project.musical_key}</span>
               )}
+              {project.track_count != null && project.track_count > 0 && (
+                <span className="text-[10px] text-[#3a3a3a] font-bold">{project.track_count}t</span>
+              )}
 
               {/* Date — right side */}
               <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-[#2e2e2e] font-bold tabular-nums">
@@ -252,34 +247,23 @@ export default function ProjectCard({
         </div>
       </div>
 
-      {/* Context menu — rendered at body level via portal */}
-      {ctxMenu && !isOverlay && createPortal(
-        <div
-          style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999 }}
-          className="bg-base border border-border shadow-2xl shadow-black/90 py-1 min-w-[180px] overflow-hidden"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <div className="px-3 py-1.5 text-[10px] font-bold text-text-dark uppercase tracking-wider">
-            Move to
-          </div>
-          {stages.filter((s) => s.slug !== project.stage).map((s) => (
-            <button
-              key={s.slug}
-              onClick={() => handleMoveToStage(s.slug)}
-              className="w-full text-left px-3 py-2 text-[10px] text-text-secondary hover:text-text hover:bg-surface transition-colors uppercase tracking-wider"
-            >
-              {s.name}
-            </button>
-          ))}
-          <div className="h-px bg-border my-1" />
-          <button
-            onClick={() => { setCtxMenu(null); setConfirmDelete(true) }}
-            className="w-full text-left px-3 py-2 text-[12px] text-red-400/80 hover:text-red-400 hover:bg-red-400/5 transition-colors"
-          >
-            Delete
-          </button>
-        </div>,
-        document.body
+      {/* Context menu */}
+      {!isOverlay && (
+        <ContextMenu
+          position={ctxMenu}
+          onClose={() => setCtxMenu(null)}
+          items={[
+            ...stages.filter((s) => s.slug !== project.stage).map((s) => ({
+              label: `Move to ${s.name}`,
+              onClick: () => handleMoveToStage(s.slug)
+            })),
+            {
+              label: 'Delete',
+              danger: true,
+              onClick: () => { setCtxMenu(null); setConfirmDelete(true) }
+            }
+          ]}
+        />
       )}
 
       <ConfirmDialog

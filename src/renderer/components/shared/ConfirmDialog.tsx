@@ -40,7 +40,7 @@ export default function ConfirmDialog({
             <AlertDialog.Action asChild>
               <button
                 onClick={onConfirm}
-                className="px-5 py-2 bg-accent hover:bg-red-600 text-white font-bold text-[10px] uppercase tracking-widest transition-all duration-200"
+                className="btn-primary"
               >
                 {confirmLabel}
               </button>

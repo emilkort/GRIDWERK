@@ -42,7 +42,7 @@ export default function DawHubPage() {
         </div>
         <button
           onClick={() => setRegisterOpen(true)}
-          className="flex items-center gap-2 px-5 py-2 bg-accent hover:bg-red-600 text-white text-[11px] font-bold uppercase tracking-widest transition-all duration-200"
+          className="btn-primary flex items-center gap-2"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />

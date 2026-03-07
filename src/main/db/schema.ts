@@ -99,6 +99,8 @@ export interface Project {
   musical_key: string | null
   daw_project_id: number | null
   color: string | null
+  track_count: number | null
+  time_signature: string | null
   created_at: number
   updated_at: number
 }

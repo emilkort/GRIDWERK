@@ -24,6 +24,11 @@ export interface AnalyticsData {
   vstsByVendor: { vendor: string; count: number }[]
   vstsByCategory: { category: string; count: number }[]
   recentVsts: { plugin_name: string; vendor: string | null; category: string | null; icon_url: string | null }[]
+  projectBpmDistribution: { range: string; count: number }[]
+  projectKeyDistribution: { key: string; count: number }[]
+  topProjectPlugins: { plugin_name: string; project_count: number }[]
+  avgTrackCount: number | null
+  collectionCount: number
   completionRate: number
   avgVersionsPerSong: number
   mostProductiveDay: { day: string; count: number } | null
@@ -183,6 +188,45 @@ export function getAnalyticsData(): AnalyticsData {
     `SELECT title, stage, created_at FROM projects ORDER BY created_at DESC LIMIT 5`
   ).all() as { title: string; stage: string; created_at: number }[]
 
+  // Project BPM distribution (from .als parsing)
+  const projectBpmDistribution = db.prepare(
+    `SELECT
+       CASE
+         WHEN bpm < 80 THEN '< 80'
+         WHEN bpm BETWEEN 80 AND 99 THEN '80-99'
+         WHEN bpm BETWEEN 100 AND 119 THEN '100-119'
+         WHEN bpm BETWEEN 120 AND 139 THEN '120-139'
+         WHEN bpm BETWEEN 140 AND 159 THEN '140-159'
+         WHEN bpm >= 160 THEN '160+'
+       END as range,
+       COUNT(*) as count
+     FROM projects WHERE bpm IS NOT NULL
+     GROUP BY range ORDER BY MIN(bpm)`
+  ).all() as { range: string; count: number }[]
+
+  // Project key distribution
+  const projectKeyDistribution = db.prepare(
+    'SELECT musical_key as key, COUNT(*) as count FROM projects WHERE musical_key IS NOT NULL GROUP BY musical_key ORDER BY count DESC LIMIT 12'
+  ).all() as { key: string; count: number }[]
+
+  // Top plugins used across projects
+  const topProjectPlugins = db.prepare(
+    `SELECT plugin_name, COUNT(DISTINCT project_id) as project_count
+     FROM project_plugins GROUP BY plugin_name ORDER BY project_count DESC LIMIT 15`
+  ).all() as { plugin_name: string; project_count: number }[]
+
+  // Average track count
+  const avgTrackRow = db.prepare(
+    'SELECT AVG(track_count) as avg FROM projects WHERE track_count IS NOT NULL AND track_count > 0'
+  ).get() as { avg: number | null }
+  const avgTrackCount = avgTrackRow?.avg ? Math.round(avgTrackRow.avg * 10) / 10 : null
+
+  // Collection count
+  let collectionCount = 0
+  try {
+    collectionCount = (db.prepare('SELECT COUNT(*) as c FROM collections').get() as { c: number }).c
+  } catch { /* table might not exist yet */ }
+
   return {
     totals: { samples: totalSamples, projects: totalProjects, songs: totalSongs, vsts: totalVsts, analyzedPercent, vstEnrichedPercent, favoriteSamples, favoriteVsts, totalDiskMb },
     projectsByStage,
@@ -196,6 +240,11 @@ export function getAnalyticsData(): AnalyticsData {
     vstsByVendor,
     vstsByCategory,
     recentVsts,
+    projectBpmDistribution,
+    projectKeyDistribution,
+    topProjectPlugins,
+    avgTrackCount,
+    collectionCount,
     completionRate,
     avgVersionsPerSong,
     mostProductiveDay,

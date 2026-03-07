@@ -153,6 +153,45 @@ export const producerApi = {
     reorder: (orderedIds: number[]) => ipcRenderer.invoke('stage:reorder', orderedIds)
   },
 
+  // Service Integrations (Splice / Tracklib)
+  service: {
+    listConnections: () => ipcRenderer.invoke('service:list-connections'),
+    updateConnection: (service: string, changes: Record<string, any>) =>
+      ipcRenderer.invoke('service:update-connection', service, changes),
+    detectSplice: () => ipcRenderer.invoke('service:detect-splice') as Promise<{ found: boolean; folderPath: string | null; dbPath: string | null }>,
+    detectTracklib: () => ipcRenderer.invoke('service:detect-tracklib') as Promise<{ found: boolean; folderPath: string | null }>,
+    syncSplice: () => ipcRenderer.invoke('service:sync-splice') as Promise<{ synced: number }>,
+    syncTracklib: () => ipcRenderer.invoke('service:sync-tracklib') as Promise<{ synced: number }>,
+    searchSplice: (query: string, options?: { limit?: number; page?: number; key?: string; minBpm?: number; maxBpm?: number }) =>
+      ipcRenderer.invoke('service:search-splice', query, options),
+    downloadSample: (sampleId: number) => ipcRenderer.invoke('service:download-sample', sampleId),
+    fetchPreview: (sampleId: number) => ipcRenderer.invoke('service:fetch-preview', sampleId) as Promise<string | null>
+  },
+
+  // Collections (Organiser)
+  collection: {
+    list: () => ipcRenderer.invoke('collection:list'),
+    get: (id: number) => ipcRenderer.invoke('collection:get', id),
+    create: (data: { name: string; type: string; description?: string; color?: string }) =>
+      ipcRenderer.invoke('collection:create', data),
+    update: (id: number, changes: Record<string, any>) =>
+      ipcRenderer.invoke('collection:update', id, changes),
+    delete: (id: number) => ipcRenderer.invoke('collection:delete', id),
+    getItems: (collectionId: number) => ipcRenderer.invoke('collection:get-items', collectionId),
+    addItem: (collectionId: number, projectId: number) =>
+      ipcRenderer.invoke('collection:add-item', collectionId, projectId),
+    removeItem: (collectionId: number, projectId: number) =>
+      ipcRenderer.invoke('collection:remove-item', collectionId, projectId),
+    reorderItems: (collectionId: number, orderedProjectIds: number[]) =>
+      ipcRenderer.invoke('collection:reorder-items', collectionId, orderedProjectIds),
+    updateItemNotes: (collectionId: number, projectId: number, notes: string) =>
+      ipcRenderer.invoke('collection:update-item-notes', collectionId, projectId, notes),
+    getSuggestions: (collectionId: number) =>
+      ipcRenderer.invoke('collection:get-suggestions', collectionId),
+    setArtwork: (collectionId: number) =>
+      ipcRenderer.invoke('collection:set-artwork', collectionId) as Promise<string | null>
+  },
+
   // Analytics
   analytics: {
     getData: () => ipcRenderer.invoke('analytics:get-data')
@@ -265,6 +304,19 @@ export const producerApi = {
       const handler = (_: any, data: any) => callback(data)
       ipcRenderer.on('vst:plugin-changed', handler)
       return () => ipcRenderer.removeListener('vst:plugin-changed', handler)
+    },
+    // Fired when a service sample is synced (Splice/Tracklib watcher)
+    serviceSampleSynced: (
+      callback: (data: {
+        service: string
+        event: 'add' | 'unlink' | 'downloaded'
+        sampleId?: number
+        fileName?: string
+      }) => void
+    ) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('service:sample-synced', handler)
+      return () => ipcRenderer.removeListener('service:sample-synced', handler)
     },
     mainLog: (
       callback: (data: {

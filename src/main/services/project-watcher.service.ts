@@ -10,9 +10,9 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { BrowserWindow } from 'electron'
 import { getDb } from './database.service'
-import { createProject, generateGroupKey } from './project.service'
+import { createProject, generateGroupKey, updateProject } from './project.service'
 import { normalizePath } from '../utils/paths'
-import { extractPluginsFromAls } from './als-parser.service'
+import { parseAlsFile } from './als-parser.service'
 import type { Daw } from '../db/schema'
 
 const watchers = new Map<number, chokidar.FSWatcher>()
@@ -25,9 +25,51 @@ export function startWatchingAllDaws(win: BrowserWindow): void {
       startWatchingDaw(daw, win)
     }
     importUnlinkedDawProjects(win)
+    backfillAlsMetadata()
   } catch (err) {
     console.error('[Watcher] Failed to start watchers:', err)
   }
+}
+
+/**
+ * Backfill .als metadata for projects that have a linked DAW file but are
+ * missing BPM/key data. Runs once on startup — safe and idempotent.
+ */
+function backfillAlsMetadata(): void {
+  const db = getDb()
+  // Only backfill projects that have never been parsed (track_count IS NULL).
+  // Don't use bpm IS NULL — many .als files legitimately have no BPM data,
+  // which would cause infinite re-parsing on every startup.
+  const rows = db.prepare(`
+    SELECT p.id AS project_id, dp.file_path
+    FROM projects p
+    JOIN daw_projects dp ON dp.id = p.daw_project_id
+    WHERE dp.file_path LIKE '%.als'
+      AND p.track_count IS NULL
+  `).all() as { project_id: number; file_path: string }[]
+  if (rows.length === 0) return
+
+  console.log(`[Watcher] Backfilling .als metadata for ${rows.length} project(s)...`)
+
+  // Process in batches via setTimeout to avoid blocking the main process
+  let i = 0
+  const BATCH = 10
+  function processBatch(): void {
+    const end = Math.min(i + BATCH, rows.length)
+    for (; i < end; i++) {
+      try {
+        if (fs.existsSync(rows[i].file_path)) {
+          syncAlsMetadata(rows[i].project_id, rows[i].file_path)
+        }
+      } catch { /* best-effort */ }
+    }
+    if (i < rows.length) {
+      setTimeout(processBatch, 0) // yield to event loop
+    } else {
+      console.log(`[Watcher] Backfill complete (${rows.length} project(s))`)
+    }
+  }
+  processBatch()
 }
 
 /**
@@ -160,7 +202,7 @@ function handleAdd(dawId: number, filePath: string, win: BrowserWindow): void {
 
     // Extract plugins from Ableton .als files
     if (filePath.toLowerCase().endsWith('.als')) {
-      try { saveProjectPlugins(project.id, filePath) } catch { /* best-effort */ }
+      try { syncAlsMetadata(project.id, filePath) } catch { /* best-effort */ }
     }
 
     notify(win, { event: 'add', dawProjectId, projectId: project.id, fileName })
@@ -194,7 +236,7 @@ function handleChange(filePath: string, win: BrowserWindow): void {
     if (filePath.toLowerCase().endsWith('.als') && row?.id) {
       const project = db.prepare('SELECT id FROM projects WHERE daw_project_id = ?').get(row.id) as { id: number } | undefined
       if (project) {
-        try { saveProjectPlugins(project.id, filePath) } catch { /* best-effort */ }
+        try { syncAlsMetadata(project.id, filePath) } catch { /* best-effort */ }
       }
     }
 
@@ -224,22 +266,36 @@ function handleUnlink(filePath: string, win: BrowserWindow): void {
   }
 }
 
-/** Extract plugins from an .als file and save to project_plugins table */
-function saveProjectPlugins(projectId: number, alsPath: string): void {
-  const plugins = extractPluginsFromAls(alsPath)
-  if (plugins.length === 0) return
+/** Parse .als file and sync all extracted metadata to the project card + plugins table */
+function syncAlsMetadata(projectId: number, alsPath: string): void {
+  const info = parseAlsFile(alsPath)
+  if (!info) return
 
-  const db = getDb()
-  const upsert = db.prepare(
-    'INSERT OR REPLACE INTO project_plugins (project_id, plugin_name, format, file_name) VALUES (?, ?, ?, ?)'
-  )
-  const tx = db.transaction(() => {
-    for (const p of plugins) {
-      upsert.run(projectId, p.name, p.format, p.fileName ?? null)
-    }
-  })
-  tx()
-  console.log(`[Watcher] Extracted ${plugins.length} plugins from project ${projectId}`)
+  // Auto-fill project fields (only overwrite if currently empty or if parsed value exists)
+  const changes: Record<string, any> = {}
+  if (info.bpm) changes.bpm = info.bpm
+  if (info.musicalKey) changes.musical_key = info.musicalKey
+  if (info.trackCount > 0) changes.track_count = info.trackCount
+  if (info.timeSignature) changes.time_signature = info.timeSignature
+  if (Object.keys(changes).length > 0) {
+    updateProject(projectId, changes)
+  }
+
+  // Sync plugins
+  if (info.plugins.length > 0) {
+    const db = getDb()
+    const upsert = db.prepare(
+      'INSERT OR REPLACE INTO project_plugins (project_id, plugin_name, format, file_name) VALUES (?, ?, ?, ?)'
+    )
+    const tx = db.transaction(() => {
+      for (const p of info.plugins) {
+        upsert.run(projectId, p.name, p.format, p.fileName ?? null)
+      }
+    })
+    tx()
+  }
+
+  console.log(`[Watcher] Synced .als metadata for project ${projectId}: ${info.plugins.length} plugins, BPM=${info.bpm}, Key=${info.musicalKey}, Tracks=${info.trackCount}`)
 }
 
 function notify(

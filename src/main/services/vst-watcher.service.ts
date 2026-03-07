@@ -122,7 +122,7 @@ function handleVstAdd(filePath: string, scanPath: VstScanPath, win: BrowserWindo
     notify(win, { event: 'add', pluginId, pluginName: parsed.name, filePath: normalized })
 
     // Auto-enrich in background (non-blocking)
-    enrichmentService.enrichNewPlugins(win).catch(() => {})
+    enrichmentService.enrichNewPlugins(win).catch((err) => console.error('[VstWatcher] enrichNewPlugins failed:', err))
   } catch (err) {
     console.error('[VSTWatcher] handleVstAdd error:', err)
   }

@@ -266,6 +266,122 @@ function runIncrementalMigrations(db: Database.Database): void {
     console.log('Applied inline migration: 010_project_plugins')
   }
 
+  // 011: Service integrations (Splice, Tracklib)
+  if (!applied.has('011_service_integrations')) {
+    try { db.exec("ALTER TABLE samples ADD COLUMN source TEXT NOT NULL DEFAULT 'local'") } catch { /* exists */ }
+    try { db.exec('ALTER TABLE samples ADD COLUMN source_id TEXT') } catch { /* exists */ }
+    try { db.exec('ALTER TABLE samples ADD COLUMN is_cloud INTEGER NOT NULL DEFAULT 0') } catch { /* exists */ }
+    try { db.exec('ALTER TABLE samples ADD COLUMN cloud_preview_url TEXT') } catch { /* exists */ }
+    try { db.exec('ALTER TABLE samples ADD COLUMN pack_name TEXT') } catch { /* exists */ }
+    try { db.exec('ALTER TABLE samples ADD COLUMN source_tags TEXT') } catch { /* exists */ }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_samples_source ON samples(source)')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_samples_cloud ON samples(is_cloud)')
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS service_connections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        service TEXT NOT NULL UNIQUE,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        local_folder TEXT,
+        metadata_db_path TEXT,
+        last_synced INTEGER,
+        config TEXT,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      )
+    `)
+    db.exec("INSERT OR IGNORE INTO service_connections (service) VALUES ('splice'), ('tracklib')")
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('011_service_integrations')
+    console.log('Applied inline migration: 011_service_integrations')
+  }
+
+  // 012: Remove hardcoded CHECK(stage IN ...) constraint from projects table
+  // Migration 006 was supposed to do this but may have failed on some databases.
+  if (!applied.has('012_remove_stage_check')) {
+    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'").get() as { sql: string } | undefined
+    if (tableInfo?.sql?.includes('CHECK')) {
+      db.pragma('foreign_keys = OFF')
+      try {
+        const cols = (db.prepare('PRAGMA table_info(projects)').all() as any[]).map((c: any) => c.name)
+        const colList = cols.join(', ')
+        db.exec(`
+          CREATE TABLE projects_tmp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            stage TEXT NOT NULL DEFAULT 'idea',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            bpm REAL,
+            musical_key TEXT,
+            daw_project_id INTEGER REFERENCES daw_projects(id) ON DELETE SET NULL,
+            color TEXT,
+            priority TEXT NOT NULL DEFAULT 'normal',
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+          );
+          INSERT INTO projects_tmp (${colList}) SELECT ${colList} FROM projects;
+          DROP TABLE projects;
+          ALTER TABLE projects_tmp RENAME TO projects;
+          CREATE INDEX IF NOT EXISTS idx_projects_stage ON projects(stage, sort_order);
+        `)
+      } finally {
+        db.pragma('foreign_keys = ON')
+      }
+    }
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('012_remove_stage_check')
+    console.log('Applied inline migration: 012_remove_stage_check')
+  }
+
+  // 013: project metadata from .als parsing (track count, time signature)
+  if (!applied.has('013_project_als_metadata')) {
+    try { db.exec('ALTER TABLE projects ADD COLUMN track_count INTEGER') } catch { /* exists */ }
+    try { db.exec('ALTER TABLE projects ADD COLUMN time_signature TEXT') } catch { /* exists */ }
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('013_project_als_metadata')
+    console.log('Applied inline migration: 013_project_als_metadata')
+  }
+
+  // 014: collections (albums, EPs, singles) for organiser tab
+  if (!applied.has('014_collections')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS collections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'album' CHECK(type IN ('album','ep','single','playlist')),
+        description TEXT,
+        artwork_path TEXT,
+        color TEXT DEFAULT '#8b5cf6',
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      );
+      CREATE TABLE IF NOT EXISTS collection_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        UNIQUE(collection_id, project_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_collection_items_collection ON collection_items(collection_id, sort_order);
+      CREATE INDEX IF NOT EXISTS idx_collection_items_project ON collection_items(project_id);
+    `)
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('014_collections')
+    console.log('Applied inline migration: 014_collections')
+  }
+
+  // 015: Re-parse .als files — previous parser used MasterTrack (Live 11) instead of
+  // MainTrack (Live 12), so BPM/key were never extracted. Reset track_count to NULL
+  // for .als-linked projects so the backfill picks them up again with the fixed parser.
+  if (!applied.has('015_reparse_als_metadata')) {
+    db.exec(`
+      UPDATE projects SET track_count = NULL, bpm = NULL, musical_key = NULL, time_signature = NULL
+      WHERE daw_project_id IN (
+        SELECT dp.id FROM daw_projects dp WHERE dp.file_path LIKE '%.als'
+      )
+    `)
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run('015_reparse_als_metadata')
+    console.log('Applied inline migration: 015_reparse_als_metadata')
+  }
+
   // 003: indexed forward-slash path for fast subfolder filtering + composite indexes
   if (!applied.has('003_path_fwd_and_composite_indexes')) {
     try {

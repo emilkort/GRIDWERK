@@ -16,6 +16,8 @@ export interface Project {
   musical_key: string | null
   daw_project_id: number | null
   color: string | null
+  track_count: number | null
+  time_signature: string | null
   priority: 'urgent' | 'high' | 'normal' | 'low'
   created_at: number
   updated_at: number
@@ -70,17 +72,29 @@ interface ProjectStore {
   dismissDawNotification: () => void
 }
 
+// Module-level move guard — survives HMR reloads so stale listeners
+// can never overwrite optimistic stage moves.
+let lastMoveTime = 0
+
+// Track previous listener for cleanup on HMR reload
+let dawListenerUnsub: (() => void) | null = null
+
 export const useProjectStore = create<ProjectStore>((set, get) => {
+  // Clean up previous listener (prevents HMR accumulation)
+  if (dawListenerUnsub) dawListenerUnsub()
+
   // Listen for DAW filesystem events pushed from main process — silent refresh
-  window.api.on.dawProjectChanged((data) => {
+  dawListenerUnsub = window.api.on.dawProjectChanged((data) => {
+    if (Date.now() - lastMoveTime < 3000) return
     window.api.project.list().then((projects: any[]) => {
+      if (Date.now() - lastMoveTime < 3000) return
       set({ projects })
       const { selectedProjectId } = get()
       if (selectedProjectId) get().fetchTodos(selectedProjectId)
       if (data.event !== 'change') {
         set({ pendingDawNotification: { event: data.event, fileName: data.fileName } })
       }
-    }).catch(() => {})
+    }).catch((err) => console.error('[ProjectStore] dawProjectChanged refresh failed:', err))
   })
 
   return {
@@ -96,6 +110,39 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       try {
         const projects = await window.api.project.list()
         set({ projects })
+        // Auto-consolidate: if siblings are in different stages, move them all
+        // to the stage of the most recently updated member.
+        const grouped = new Map<string, typeof projects>()
+        for (const p of projects) {
+          const key = p.group_key
+          if (!key) continue
+          if (!grouped.has(key)) grouped.set(key, [])
+          grouped.get(key)!.push(p)
+        }
+        const moves: { id: number; stage: string; sortOrder: number }[] = []
+        for (const [, members] of grouped) {
+          if (members.length < 2) continue
+          const stages = new Set(members.map((m) => m.stage))
+          if (stages.size <= 1) continue
+          // Pick the stage of the most recently updated member
+          const newest = members.reduce((a, b) =>
+            (b.daw_last_modified ?? b.updated_at) > (a.daw_last_modified ?? a.updated_at) ? b : a
+          )
+          for (const m of members) {
+            if (m.stage !== newest.stage) {
+              moves.push({ id: m.id, stage: newest.stage, sortOrder: m.sort_order })
+            }
+          }
+        }
+        if (moves.length > 0) {
+          lastMoveTime = Date.now()
+          for (const m of moves) {
+            try { await window.api.project.moveStage(m.id, m.stage, m.sortOrder) } catch { /* ignore */ }
+          }
+          const fresh = await window.api.project.list()
+          set({ projects: fresh })
+          lastMoveTime = Date.now()
+        }
       } finally {
         set({ loading: false })
       }
@@ -121,24 +168,54 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     },
 
     moveProject: async (id, stage, sortOrder) => {
-      const prev = get().projects
+      lastMoveTime = Date.now()
+      // Find all siblings with same group_key to move together
+      const project = get().projects.find((p) => p.id === id)
+      const groupKey = project?.group_key
+      const siblings = groupKey
+        ? get().projects.filter((p) => p.group_key === groupKey && p.id !== id)
+        : []
+      // Optimistic update — move target + all siblings
       set((state) => ({
-        projects: state.projects.map((p) =>
-          p.id === id ? { ...p, stage, sort_order: sortOrder } : p
-        )
+        projects: state.projects.map((p) => {
+          if (p.id === id) return { ...p, stage, sort_order: sortOrder }
+          if (siblings.some((s) => s.id === p.id)) return { ...p, stage }
+          return p
+        })
       }))
       try {
         await window.api.project.moveStage(id, stage, sortOrder)
-      } catch {
-        // Revert to pre-move state, then refresh from DB
-        set({ projects: prev })
-        try { await get().fetchProjects() } catch { /* best-effort */ }
-      }
+        // Move siblings in DB too
+        for (const s of siblings) {
+          await window.api.project.moveStage(s.id, stage, s.sort_order)
+        }
+        // Re-fetch from DB to ensure consistency
+        lastMoveTime = Date.now()
+        const fresh = await window.api.project.list()
+        set({ projects: fresh })
+      } catch { /* ignore */ }
+      lastMoveTime = Date.now()
     },
 
     moveGroup: async (groupKey, stage) => {
+      lastMoveTime = Date.now()
       const members = get().projects.filter((p) => (p.group_key || p.title) === groupKey)
-      await Promise.all(members.map((m, i) => get().moveProject(m.id, stage, i)))
+      // Optimistic update
+      set((state) => ({
+        projects: state.projects.map((p) => {
+          const isMember = members.some((m) => m.id === p.id)
+          return isMember ? { ...p, stage, sort_order: members.findIndex((m) => m.id === p.id) } : p
+        })
+      }))
+      for (let i = 0; i < members.length; i++) {
+        try { await window.api.project.moveStage(members[i].id, stage, i) } catch { /* ignore */ }
+      }
+      lastMoveTime = Date.now()
+      try {
+        const projects = await window.api.project.list()
+        set({ projects })
+      } catch { /* ignore */ }
+      lastMoveTime = Date.now()
     },
 
     deleteProject: async (id) => {

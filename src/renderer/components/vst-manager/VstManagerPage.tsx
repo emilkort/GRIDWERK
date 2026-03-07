@@ -121,7 +121,7 @@ export default function VstManagerPage() {
           <button
             onClick={handleScanAll}
             disabled={scanning || !hasScanPaths}
-            className="flex items-center gap-2 px-5 py-2 bg-accent hover:bg-red-600 text-white text-[11px] font-bold uppercase tracking-widest transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="btn-primary flex items-center gap-2 disabled:cursor-not-allowed"
           >
             {scanning ? (
               <>

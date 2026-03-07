@@ -5,6 +5,7 @@ import { destroyAnalysisWorker } from './services/audio-analysis.service'
 import { registerAllIpcHandlers } from './ipc'
 import { startWatchingAllDaws, stopAllWatchers } from './services/project-watcher.service'
 import { startWatchingAllVstPaths, stopAllVstWatchers } from './services/vst-watcher.service'
+import { startAllServiceWatchers, stopAllServiceWatchers } from './services/service-watcher.service'
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -20,7 +21,9 @@ function createWindow(): BrowserWindow {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      webSecurity: false
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: !process.env['ELECTRON_RENDERER_URL']
     }
   })
 
@@ -104,6 +107,9 @@ app.whenReady().then(() => {
   // Start watching VST scan paths for automatic plugin detection
   startWatchingAllVstPaths(mainWindow)
 
+  // Start watching Splice/Tracklib download folders
+  startAllServiceWatchers(mainWindow)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -112,6 +118,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   stopAllWatchers()
   stopAllVstWatchers()
+  stopAllServiceWatchers()
   destroyAnalysisWorker()
   closeDatabase()
   if (process.platform !== 'darwin') {

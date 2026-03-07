@@ -224,6 +224,32 @@ export default function SampleBrowser() {
         ))}
       </div>
 
+      {/* Services section */}
+      <div className="border-t border-border px-5 py-3 shrink-0">
+        <h2 className="text-text-muted text-[9px] font-bold uppercase tracking-[0.15em] mb-2">Sources</h2>
+        {(['all', 'local', 'splice', 'tracklib'] as const).map((src) => {
+          const isActive = filters.sourceFilter === src
+          const labelMap = { all: 'All Sources', local: 'Local', splice: 'Splice', tracklib: 'Tracklib' }
+          const colorMap = { all: 'text-text-muted', local: 'text-text-muted', splice: 'text-orange-400', tracklib: 'text-cyan-400' }
+          return (
+            <button
+              key={src}
+              onClick={() => setFilters({ sourceFilter: src })}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 text-left text-[11px] transition-all ${
+                isActive ? 'text-text font-medium bg-elevated' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              {src !== 'all' && src !== 'local' && (
+                <span className={`w-1.5 h-1.5 rounded-full ${src === 'splice' ? 'bg-orange-400' : 'bg-cyan-400'}`} />
+              )}
+              <span className={`flex-1 uppercase tracking-wider ${isActive && src !== 'all' && src !== 'local' ? colorMap[src] : ''}`}>
+                {labelMap[src]}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
       {/* Add folder button */}
       <div className="px-5 py-4 bg-surface">
         <button

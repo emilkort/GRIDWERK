@@ -728,7 +728,7 @@ function BulkTagPopover({ tags, selectedIds, onDone }: BulkTagPopoverProps) {
       <Popover.Trigger asChild>
         <button
           disabled={applying}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest transition-colors disabled:opacity-50"
+          className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[10px]"
         >
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />

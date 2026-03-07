@@ -43,7 +43,7 @@ export function findSimilarSamples(sampleId: number, limit: number = 20): Simila
   }
 
   const rows = db.prepare(
-    'SELECT id, file_name, file_path, category, embedding FROM samples WHERE id != ? AND embedding IS NOT NULL'
+    'SELECT id, file_name, file_path, category, embedding FROM samples WHERE id != ? AND embedding IS NOT NULL LIMIT 5000'
   ).all(sampleId) as { id: number; file_name: string; file_path: string; category: string | null; embedding: Buffer }[]
 
   const results: SimilarResult[] = []
@@ -88,7 +88,7 @@ export function findDuplicates(): { exact: DuplicateGroup[]; near: NearDuplicate
   // Near duplicates: similar duration + high waveform peak cosine similarity
   const near: NearDuplicateGroup[] = []
   const analyzed = db.prepare(
-    'SELECT id, file_name, file_path, file_size, duration_ms, embedding FROM samples WHERE embedding IS NOT NULL AND waveform_hash IS NOT NULL ORDER BY duration_ms'
+    'SELECT id, file_name, file_path, file_size, duration_ms, embedding FROM samples WHERE embedding IS NOT NULL AND waveform_hash IS NOT NULL ORDER BY duration_ms LIMIT 5000'
   ).all() as { id: number; file_name: string; file_path: string; file_size: number | null; duration_ms: number | null; embedding: Buffer }[]
 
   // Group by similar duration (within 10%) and check embedding similarity

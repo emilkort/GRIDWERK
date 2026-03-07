@@ -25,6 +25,11 @@ export interface Sample {
   zero_crossing_rate: number | null
   attack_time_ms: number | null
   onset_count: number | null
+  source: string
+  is_cloud: number
+  pack_name: string | null
+  cloud_preview_url: string | null
+  source_tags: string | null
   last_modified: number | null
   created_at: number
   updated_at: number
@@ -51,6 +56,7 @@ interface SampleFilters {
   keyFilter: string | null
   isFavorites: boolean
   analyzedFilter: 'all' | 'analyzed' | 'unanalyzed'
+  sourceFilter: 'all' | 'local' | 'splice' | 'tracklib'
 }
 
 export interface Tag {
@@ -127,7 +133,8 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
     bpmMax: null,
     keyFilter: null,
     isFavorites: false,
-    analyzedFilter: 'all'
+    analyzedFilter: 'all',
+    sourceFilter: 'all'
   },
   loading: true, // start true so spinner shows immediately on first render
   scanning: false,
@@ -148,8 +155,8 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
   },
 
   fetchSamples: async () => {
-    const { folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter } = get().filters
-    const cacheKey = JSON.stringify({ folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter })
+    const { folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter, sourceFilter } = get().filters
+    const cacheKey = JSON.stringify({ folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter, sourceFilter })
 
     const cached = _sampleCache.get(cacheKey)
     if (cached) {
@@ -172,7 +179,8 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
       bpmMax: bpmMax ?? undefined,
       key: keyFilter ?? undefined,
       isFavorites: isFavorites || undefined,
-      analyzedFilter: analyzedFilter !== 'all' ? analyzedFilter : undefined
+      analyzedFilter: analyzedFilter !== 'all' ? analyzedFilter : undefined,
+      source: sourceFilter !== 'all' ? sourceFilter : undefined
     }
 
     try {
@@ -192,7 +200,7 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
     const { samples, totalFilteredCount, hasMore, filters } = get()
     if (!hasMore || samples.length >= totalFilteredCount) return
 
-    const { folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter } = filters
+    const { folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter, sourceFilter } = filters
     try {
       const raw = await window.api.sample.list({
         folderId: folderId ?? undefined,
@@ -207,6 +215,7 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
         key: keyFilter ?? undefined,
         isFavorites: isFavorites || undefined,
         analyzedFilter: analyzedFilter !== 'all' ? analyzedFilter : undefined,
+        source: sourceFilter !== 'all' ? sourceFilter : undefined,
         limit: PAGE_SIZE,
         offset: samples.length,
         skipCount: true
@@ -220,7 +229,7 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
       set({ samples: merged, totalFilteredCount: total, hasMore: merged.length < total })
 
       // Update cache with accumulated result
-      const cacheKey = JSON.stringify({ folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter })
+      const cacheKey = JSON.stringify({ folderId, category, search, subfolderPath, tagIds, sortBy, sortDir, bpmMin, bpmMax, keyFilter, isFavorites, analyzedFilter, sourceFilter })
       _sampleCache.set(cacheKey, { samples: merged, total: result.total, ts: Date.now() })
     } catch { /* ignore */ }
   },
@@ -356,28 +365,41 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
   }
 }))
 
-// Module-level IPC listeners — persist across page navigation (never cleaned up)
-window.api.on.analysisProgress((data) => {
-  useSampleStore.getState().setAnalysisProgress({
-    current: data.current,
-    total: data.total,
-    currentFile: data.currentFile
-  })
-})
-window.api.on.analysisComplete((data) => {
-  _sampleCache.clear()
-  useSampleStore.getState().fetchSamples()
-  useSampleStore.getState().fetchTotalCount()
-  if (data.total > 0) {
-    useSampleStore.setState({
-      analyzing: false,
-      analysisProgress: null,
-      completionMsg: `Analyzed ${data.successCount}/${data.total} samples`
+// Module-level IPC listeners — persist across page navigation.
+// Guard against duplicate registration during HMR reloads.
+if (!(window as any).__sampleListenersRegistered) {
+  (window as any).__sampleListenersRegistered = true
+
+  window.api.on.analysisProgress((data) => {
+    useSampleStore.getState().setAnalysisProgress({
+      current: data.current,
+      total: data.total,
+      currentFile: data.currentFile
     })
-    setTimeout(() => {
-      useSampleStore.setState({ completionMsg: null })
-    }, 4000)
-  } else {
-    useSampleStore.setState({ analyzing: false, analysisProgress: null })
+  })
+  window.api.on.analysisComplete((data) => {
+    _sampleCache.clear()
+    useSampleStore.getState().fetchSamples()
+    useSampleStore.getState().fetchTotalCount()
+    if (data.total > 0) {
+      useSampleStore.setState({
+        analyzing: false,
+        analysisProgress: null,
+        completionMsg: `Analyzed ${data.successCount}/${data.total} samples`
+      })
+      setTimeout(() => {
+        useSampleStore.setState({ completionMsg: null })
+      }, 4000)
+    } else {
+      useSampleStore.setState({ analyzing: false, analysisProgress: null })
+    }
+  })
+  // Auto-refresh when service watchers detect new/removed samples
+  if (window.api?.on?.serviceSampleSynced) {
+    window.api.on.serviceSampleSynced(() => {
+      _sampleCache.clear()
+      useSampleStore.getState().fetchSamples()
+      useSampleStore.getState().fetchTotalCount()
+    })
   }
-})
+}

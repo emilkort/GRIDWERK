@@ -19,7 +19,7 @@ export default function EmptyState({
       {action && (
         <button
           onClick={action.onClick}
-          className="px-6 py-2.5 bg-accent hover:bg-red-600 text-white text-[10px] font-bold uppercase tracking-widest transition-all duration-200"
+          className="btn-primary"
         >
           {action.label}
         </button>

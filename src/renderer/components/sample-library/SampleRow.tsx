@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import type { Sample } from '@/stores/sample.store'
 import { useSampleStore } from '@/stores/sample.store'
 import { useAudioPlayerStore } from '@/stores/audioPlayer.store'
@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow'
 import WaveformPreview from './WaveformPreview'
 import useWaveform from '@/hooks/useWaveform'
 import { getCamelotColor, getCamelotLabel, isCompatibleKey } from '@/utils/camelot'
+import ContextMenu, { type ContextMenuItem } from '@/components/shared/ContextMenu'
 
 interface SampleRowProps {
   sample: Sample
@@ -37,16 +38,6 @@ export default memo(function SampleRow({
   activeKeyFilter
 }: SampleRowProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
-  const ctxRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!ctxMenu) return
-    const close = (e: MouseEvent) => {
-      if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [ctxMenu])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -72,28 +63,37 @@ export default memo(function SampleRow({
   )
   const toggleFavorite = useSampleStore((s) => s.toggleFavorite)
 
+  const isCloud = !!sample.is_cloud
+  const isServiceSample = sample.source && sample.source !== 'local'
+
   const handlePlayToggle = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
+      if (isCloud) return // Cannot play cloud samples directly
       if (isPlaying) pause()
       else play(sample.file_path)
     },
-    [isPlaying, sample.file_path, play, pause]
+    [isPlaying, isCloud, sample.file_path, play, pause]
   )
 
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      if (isMultiSelected) {
-        const paths = getMultiSelectedPaths()
-        if (paths.length > 1) {
-          window.api.drag.startNative(paths)
-          return
-        }
-      }
-      window.api.drag.startNative(sample.file_path)
+      if (isCloud) return
+      const paths = isMultiSelected ? getMultiSelectedPaths() : [sample.file_path]
+      const finalPaths = paths.length > 1 ? paths : paths[0]
+      console.log('[Drag] Starting native drag:', finalPaths)
+      window.api.drag.startNative(finalPaths)
     },
-    [sample.file_path, isMultiSelected, getMultiSelectedPaths]
+    [sample.file_path, isCloud, isMultiSelected, getMultiSelectedPaths]
+  )
+
+  const handleCloudDownload = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (isCloud) window.api.service.downloadSample(sample.id)
+    },
+    [sample.id, isCloud]
   )
 
   const handleMultiToggle = useCallback(
@@ -134,7 +134,7 @@ export default memo(function SampleRow({
       } ${keyDimmed ? 'opacity-30' : ''}`}
       onClick={() => onSelect(sample)}
       onContextMenu={handleContextMenu}
-      draggable
+      draggable={!isCloud}
       onDragStart={handleDragStart}
     >
       {/* Multi-select checkbox */}
@@ -157,17 +157,29 @@ export default memo(function SampleRow({
         </div>
       </div>
 
-      {/* Drag handle */}
-      <div className="flex-shrink-0 text-text-darker group-hover:text-text-muted cursor-grab active:cursor-grabbing">
-        <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-          <circle cx="9" cy="6" r="1.5" />
-          <circle cx="15" cy="6" r="1.5" />
-          <circle cx="9" cy="12" r="1.5" />
-          <circle cx="15" cy="12" r="1.5" />
-          <circle cx="9" cy="18" r="1.5" />
-          <circle cx="15" cy="18" r="1.5" />
-        </svg>
-      </div>
+      {/* Drag handle / Cloud download */}
+      {isCloud ? (
+        <button
+          onClick={handleCloudDownload}
+          className="flex-shrink-0 text-blue-400 hover:text-blue-300 transition-colors"
+          title="Download from cloud"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 6.75l-3-3m3 3l3-3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+          </svg>
+        </button>
+      ) : (
+        <div className="flex-shrink-0 text-text-darker group-hover:text-text-muted cursor-grab active:cursor-grabbing">
+          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <circle cx="9" cy="6" r="1.5" />
+            <circle cx="15" cy="6" r="1.5" />
+            <circle cx="9" cy="12" r="1.5" />
+            <circle cx="15" cy="12" r="1.5" />
+            <circle cx="9" cy="18" r="1.5" />
+            <circle cx="15" cy="18" r="1.5" />
+          </svg>
+        </div>
+      )}
 
       {/* Play button */}
       <button
@@ -216,6 +228,17 @@ export default memo(function SampleRow({
         </svg>
       </button>
 
+      {/* Service badge */}
+      {isServiceSample && (
+        <span className={`flex-shrink-0 text-[9px] font-bold uppercase px-1.5 py-0.5 ${
+          sample.source === 'splice' ? 'bg-orange-500/15 text-orange-400 border-orange-500/30' :
+          sample.source === 'tracklib' ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' :
+          'bg-elevated text-text-dark border-border'
+        } border`}>
+          {sample.source}
+        </span>
+      )}
+
       {/* Category badge */}
       {sample.category && (
         <span className="flex-shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 bg-elevated border border-border text-text-dark">
@@ -253,43 +276,27 @@ export default memo(function SampleRow({
       </span>
 
       {/* Context menu */}
-      {ctxMenu && (
-        <div
-          ref={ctxRef}
-          className="fixed z-50 bg-surface border border-border shadow-xl py-1 min-w-[160px]"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
-        >
-          {onFindSimilar && (
-            <button
-              className="w-full text-left px-3 py-1.5 text-[11px] text-text hover:bg-elevated transition-colors flex items-center gap-2"
-              onClick={(e) => { e.stopPropagation(); setCtxMenu(null); onFindSimilar(sample) }}
-            >
-              <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-              </svg>
-              Find Similar
-            </button>
-          )}
-          <button
-            className="w-full text-left px-3 py-1.5 text-[11px] text-text hover:bg-elevated transition-colors flex items-center gap-2"
-            onClick={(e) => { e.stopPropagation(); setCtxMenu(null); window.api.shell.showInFolder(sample.file_path) }}
-          >
-            <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-            </svg>
-            Show in Folder
-          </button>
-          <button
-            className="w-full text-left px-3 py-1.5 text-[11px] text-text hover:bg-elevated transition-colors flex items-center gap-2"
-            onClick={(e) => { e.stopPropagation(); setCtxMenu(null); navigator.clipboard.writeText(sample.file_path) }}
-          >
-            <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
-            </svg>
-            Copy Path
-          </button>
-        </div>
-      )}
+      <ContextMenu
+        position={ctxMenu}
+        onClose={() => setCtxMenu(null)}
+        items={[
+          ...(onFindSimilar ? [{
+            label: 'Find Similar',
+            icon: <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>,
+            onClick: () => { setCtxMenu(null); onFindSimilar(sample) }
+          }] as ContextMenuItem[] : []),
+          {
+            label: 'Show in Folder',
+            icon: <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>,
+            onClick: () => { setCtxMenu(null); window.api.shell.showInFolder(sample.file_path) }
+          },
+          {
+            label: 'Copy Path',
+            icon: <svg className="w-3.5 h-3.5 text-text-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>,
+            onClick: () => { setCtxMenu(null); navigator.clipboard.writeText(sample.file_path) }
+          }
+        ]}
+      />
     </div>
   )
 })

@@ -107,6 +107,8 @@ const TransportControls = memo(function TransportControls() {
       <button
         onClick={handlePlayPause}
         className="flex items-center justify-center w-9 h-9 rounded-full bg-white hover:bg-accent text-black hover:text-white transition-all duration-150"
+        title={isPlaying ? 'Pause' : 'Play'}
+        aria-label={isPlaying ? 'Pause' : 'Play'}
       >
         {isPlaying ? (
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">

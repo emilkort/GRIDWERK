@@ -68,37 +68,40 @@ function searchFallback(query: string): SearchResult[] {
 export function rebuildSearchIndex(): void {
   const db = getDb()
 
-  // Drop and recreate — contentless FTS5 tables don't support DELETE
-  db.exec("DROP TABLE IF EXISTS search_index")
-  db.exec(`CREATE VIRTUAL TABLE search_index USING fts5(
-    entity_type, entity_id UNINDEXED, title, tags, metadata,
-    content='', tokenize='porter unicode61'
-  )`)
+  // Contentless FTS5 doesn't support DELETE — must DROP+RECREATE.
+  // Wrap in transaction so all INSERTs are batched (much faster on large datasets).
+  db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS search_index")
+    db.exec(`CREATE VIRTUAL TABLE search_index USING fts5(
+      entity_type, entity_id UNINDEXED, title, tags, metadata,
+      content='', tokenize='porter unicode61'
+    )`)
 
-  // Index samples
-  db.exec(`
-    INSERT INTO search_index (entity_type, entity_id, title, tags, metadata)
-    SELECT 'sample', s.id, s.file_name,
-           COALESCE((SELECT GROUP_CONCAT(t.name, ' ') FROM tags t JOIN taggables tg ON tg.tag_id = t.id WHERE tg.entity_type = 'sample' AND tg.entity_id = s.id), ''),
-           COALESCE(s.category, '') || ' ' || COALESCE(s.musical_key, '') || ' ' || COALESCE(CAST(s.bpm AS TEXT), '')
-    FROM samples s
-  `)
+    // Index samples
+    db.exec(`
+      INSERT INTO search_index (entity_type, entity_id, title, tags, metadata)
+      SELECT 'sample', s.id, s.file_name,
+             COALESCE((SELECT GROUP_CONCAT(t.name, ' ') FROM tags t JOIN taggables tg ON tg.tag_id = t.id WHERE tg.entity_type = 'sample' AND tg.entity_id = s.id), ''),
+             COALESCE(s.category, '') || ' ' || COALESCE(s.musical_key, '') || ' ' || COALESCE(CAST(s.bpm AS TEXT), '')
+      FROM samples s
+    `)
 
-  // Index VSTs
-  db.exec(`
-    INSERT INTO search_index (entity_type, entity_id, title, tags, metadata)
-    SELECT 'vst', v.id, v.plugin_name,
-           COALESCE((SELECT GROUP_CONCAT(t.name, ' ') FROM tags t JOIN taggables tg ON tg.tag_id = t.id WHERE tg.entity_type = 'vst' AND tg.entity_id = v.id), ''),
-           COALESCE(v.vendor, '') || ' ' || COALESCE(v.category, '')
-    FROM vst_plugins v
-  `)
+    // Index VSTs
+    db.exec(`
+      INSERT INTO search_index (entity_type, entity_id, title, tags, metadata)
+      SELECT 'vst', v.id, v.plugin_name,
+             COALESCE((SELECT GROUP_CONCAT(t.name, ' ') FROM tags t JOIN taggables tg ON tg.tag_id = t.id WHERE tg.entity_type = 'vst' AND tg.entity_id = v.id), ''),
+             COALESCE(v.vendor, '') || ' ' || COALESCE(v.category, '')
+      FROM vst_plugins v
+    `)
 
-  // Index projects
-  db.exec(`
-    INSERT INTO search_index (entity_type, entity_id, title, tags, metadata)
-    SELECT 'project', p.id, p.title,
-           COALESCE((SELECT GROUP_CONCAT(t.name, ' ') FROM tags t JOIN taggables tg ON tg.tag_id = t.id WHERE tg.entity_type = 'project' AND tg.entity_id = p.id), ''),
-           COALESCE(p.stage, '') || ' ' || COALESCE(p.musical_key, '') || ' ' || COALESCE(CAST(p.bpm AS TEXT), '')
-    FROM projects p
-  `)
+    // Index projects
+    db.exec(`
+      INSERT INTO search_index (entity_type, entity_id, title, tags, metadata)
+      SELECT 'project', p.id, p.title,
+             COALESCE((SELECT GROUP_CONCAT(t.name, ' ') FROM tags t JOIN taggables tg ON tg.tag_id = t.id WHERE tg.entity_type = 'project' AND tg.entity_id = p.id), ''),
+             COALESCE(p.stage, '') || ' ' || COALESCE(p.musical_key, '') || ' ' || COALESCE(CAST(p.bpm AS TEXT), '')
+      FROM projects p
+    `)
+  })()
 }
